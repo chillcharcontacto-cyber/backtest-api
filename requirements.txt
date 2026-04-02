@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+vectorbt
+pandas
+numpy
+yfinance
+matplotlib
