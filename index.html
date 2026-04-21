@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TradingEdgeLabs — Strategy Builder</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root {
+  --bg:      #080b0f;
+  --surface: #0e1318;
+  --surface2:#111820;
+  --border:  #1c2530;
+  --accent:  #00ff88;
+  --accent2: #0af;
+  --red:     #ff4560;
+  --orange:  #f0883e;
+  --text:    #e2e8f0;
+  --muted:   #4a5568;
+  --mono:    'Space Mono', monospace;
+  --sans:    'Syne', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; }
+body::before {
+  content: ''; position: fixed; inset: 0;
+  background-image: linear-gradient(rgba(0,255,136,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,.03) 1px, transparent 1px);
+  background-size: 40px 40px; pointer-events: none; z-index: 0;
+}
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+/* HEADER */
+header { padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; display: flex; align-items: center; justify-content: space-between; }
+.logo { font-family: var(--sans); font-weight: 800; font-size: 24px; letter-spacing: -1px; display: flex; align-items: center; gap: 10px; }
+.logo-dot { width: 9px; height: 9px; background: var(--accent); border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.5)} }
+.tagline { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 3px; text-transform: uppercase; margin-top: 4px; }
+
+/* API BAR */
+.api-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.api-label { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; letter-spacing: 2px; text-transform: uppercase; min-width: 60px; }
+.api-input { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 8px 12px; border-radius: 6px; outline: none; transition: border-color .2s; }
+.api-input:focus { border-color: var(--accent); color: var(--text); }
+
+/* LAYOUT */
+.builder-grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .builder-grid { grid-template-columns: 1fr; } }
+
+/* PANEL */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.panel-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 18px; display: flex; align-items: center; gap: 8px; }
+.panel-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.panel-title.exit-color { color: var(--red); }
+
+/* FORM FIELDS */
+.field { margin-bottom: 14px; }
+label { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; }
+input, select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 12px; border-radius: 6px; outline: none; transition: border-color .2s; -webkit-appearance: none; }
+input:focus, select:focus { border-color: var(--accent); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* CONFIRMATION ROW */
+.conf-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; min-height: 10px; }
+.conf-row {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  animation: fadeIn .2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.conf-row.entry-row { border-left: 3px solid var(--accent); }
+.conf-row.exit-row  { border-left: 3px solid var(--red); }
+.conf-num { font-family: var(--mono); font-size: 10px; color: var(--muted); min-width: 20px; }
+.conf-select { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 5px 8px; border-radius: 5px; outline: none; cursor: pointer; }
+.conf-select:focus { border-color: var(--accent); }
+.conf-input-sm { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 5px 8px; border-radius: 5px; outline: none; width: 64px; }
+.conf-input-sm:focus { border-color: var(--accent); }
+.conf-tag { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
+.btn-del { background: none; border: 1px solid var(--border); color: var(--muted); font-size: 14px; width: 26px; height: 26px; border-radius: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-left: auto; transition: all .15s; flex-shrink: 0; }
+.btn-del:hover { border-color: var(--red); color: var(--red); background: rgba(255,69,96,.08); }
+
+/* ADD BUTTON */
+.btn-add { background: none; border: 1px dashed var(--border); color: var(--muted); font-family: var(--mono); font-size: 11px; padding: 8px 14px; border-radius: 6px; cursor: pointer; width: 100%; transition: all .15s; letter-spacing: 1px; }
+.btn-add:hover { border-color: var(--accent); color: var(--accent); }
+.btn-add.exit-add:hover { border-color: var(--red); color: var(--red); }
+
+/* RUN BUTTON */
+.btn-run { width: 100%; background: var(--accent); color: #000; font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; border: none; padding: 14px; border-radius: 8px; cursor: pointer; margin-top: 4px; transition: opacity .2s, transform .1s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn-run:hover { opacity: .85; }
+.btn-run:active { transform: scale(.98); }
+.btn-run:disabled { opacity: .35; cursor: not-allowed; }
+.spinner { width: 14px; height: 14px; border: 2px solid #000; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* METRICS */
+.metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+@media (max-width: 560px) { .metrics-grid { grid-template-columns: 1fr 1fr; } }
+.mc { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.mc-label { font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+.mc-value { font-family: var(--mono); font-size: 20px; font-weight: 700; line-height: 1; }
+.mc-hint  { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-top: 4px; }
+.pos { color: var(--accent); } .neg { color: var(--red); } .neu { color: var(--accent2); }
+
+/* CHART */
+.chart-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 14px; height: 220px; position: relative; }
+
+/* TRADES */
+.trades-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+th { background: #0a0e12; padding: 9px 14px; text-align: left; font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 8px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,.015); }
+.badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
+.badge.win  { background: rgba(0,255,136,.1); color: var(--accent); }
+.badge.loss { background: rgba(255,69,96,.1);  color: var(--red); }
+
+/* ERROR */
+#error-box { display: none; background: rgba(255,69,96,.07); border: 1px solid rgba(255,69,96,.25); border-radius: 8px; padding: 14px 18px; font-family: var(--mono); font-size: 12px; color: var(--red); margin-bottom: 14px; line-height: 1.6; }
+
+/* SMOOTH BAR */
+.sbar-bg { height: 3px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.sbar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--red), var(--orange), var(--accent)); transition: width 1s ease; }
+
+#results { display: none; }
+.pb { padding-bottom: 60px; }
+
+/* EMPTY STATE */
+.empty-state { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: center; padding: 16px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <div class="logo"><div class="logo-dot"></div>TradingEdgeLabs</div>
+      <div class="tagline">Strategy Builder</div>
+    </div>
+  </header>
+
+  <div class="api-bar">
+    <span class="api-label">API</span>
+    <input class="api-input" id="apiUrl" value="https://backtest-api-vc7i.onrender.com">
+  </div>
+  <div class="api-bar" style="margin-bottom:28px">
+    <span class="api-label">API KEY</span>
+    <input class="api-input" id="apiKey" type="password" placeholder="TEL-xxxxxxxxxxxxxxxx">
+  </div>
+
+  <div class="builder-grid">
+
+    <!-- ── LEFT: CONFIGURACIÓN ── -->
+    <div>
+
+      <!-- MERCADO -->
+      <div class="panel">
+        <div class="panel-title">Mercado</div>
+        <div class="field">
+          <label>Ticker</label>
+          <input id="ticker" type="text" value="AAPL" placeholder="AAPL, BTC-USD, EURUSD=X">
+        </div>
+        <div class="field">
+          <label>Timeframe</label>
+          <select id="timeframe">
+            <option value="1m">1 minuto</option>
+            <option value="5m">5 minutos</option>
+            <option value="15m">15 minutos</option>
+            <option value="30m">30 minutos</option>
+            <option value="1h">1 hora</option>
+            <option value="2h">2 horas</option>
+            <option value="4h">4 horas</option>
+            <option value="1d" selected>Diario</option>
+            <option value="1wk">Semanal</option>
+          </select>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Inicio</label><input id="start" type="date" value="2024-01-01"></div>
+          <div class="field"><label>Fin</label><input id="end" type="date"></div>
+        </div>
+      </div>
+
+      <!-- RIESGO -->
+      <div class="panel">
+        <div class="panel-title">Riesgo</div>
+        <div class="row2">
+          <div class="field"><label>Capital ($)</label><input id="capital" type="number" value="10000" min="1"></div>
+          <div class="field"><label>Comisión (%)</label><input id="fees" type="number" value="0.1" min="0" step="0.01"></div>
+        </div>
+      </div>
+
+      <!-- CONFIRMACIONES DE ENTRADA -->
+      <div class="panel">
+        <div class="panel-title">Confirmaciones de Entrada</div>
+        <div class="conf-list" id="entry-list">
+          <div class="empty-state">Sin confirmaciones. Añade al menos una.</div>
+        </div>
+        <button class="btn-add" onclick="addConfirmation('entry')">+ Añadir confirmación de entrada</button>
+      </div>
+
+      <!-- CONFIRMACIONES DE SALIDA -->
+      <div class="panel">
+        <div class="panel-title exit-color">Confirmaciones de Salida</div>
+        <div class="conf-list" id="exit-list">
+          <div class="empty-state">Sin confirmaciones. Añade al menos una.</div>
+        </div>
+        <button class="btn-add exit-add" onclick="addConfirmation('exit')">+ Añadir confirmación de salida</button>
+      </div>
+
+      <!-- EJECUTAR -->
+      <button class="btn-run" id="runBtn" onclick="runBacktest()">
+        <div class="spinner" id="spinner"></div>
+        <span id="btnText">▶ Ejecutar Backtest</span>
+      </button>
+
+    </div>
+
+    <!-- ── RIGHT: RESULTADOS ── -->
+    <div class="pb">
+      <div id="error-box"></div>
+      <div id="results">
+
+        <!-- EDGE SCORE -->
+        <div class="panel">
+          <div class="panel-title">Edge Score</div>
+          <div style="text-align:center;padding:16px 0 8px">
+            <div id="edge-score-num" style="font-family:var(--mono);font-size:68px;font-weight:700;line-height:1;transition:color .3s">—</div>
+            <div id="edge-label" style="font-family:var(--mono);font-size:12px;letter-spacing:3px;margin-top:6px;text-transform:uppercase">—</div>
+            <div style="margin:14px auto 0;background:var(--border);border-radius:4px;height:5px;overflow:hidden;max-width:360px">
+              <div id="edge-bar" style="height:100%;width:0%;border-radius:4px;transition:width 1s ease;background:linear-gradient(90deg,#ff4560,#f0883e,#00ff88)"></div>
+            </div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">0 = Sin edge &nbsp;·&nbsp; 50 = Moderado &nbsp;·&nbsp; 75+ = Fuerte</div>
+          </div>
+        </div>
+
+        <!-- RESUMEN -->
+        <div class="panel">
+          <div class="panel-title">Resumen</div>
+          <div class="metrics-grid">
+            <div class="mc"><div class="mc-label">Strategy Return</div><div class="mc-value" id="m-ret">—</div></div>
+            <div class="mc"><div class="mc-label">Buy &amp; Hold</div><div class="mc-value neu" id="m-bh">—</div></div>
+            <div class="mc"><div class="mc-label">Final Value</div><div class="mc-value neu" id="m-val">—</div></div>
+            <div class="mc"><div class="mc-label">Sharpe Ratio</div><div class="mc-value" id="m-sharpe">—</div></div>
+            <div class="mc"><div class="mc-label">Max Drawdown %</div><div class="mc-value neg" id="m-dd">—</div></div>
+            <div class="mc"><div class="mc-label">Max Drawdown $</div><div class="mc-value neg" id="m-dd-abs">—</div></div>
+            <div class="mc"><div class="mc-label">Win Rate</div><div class="mc-value" id="m-wr">—</div></div>
+            <div class="mc"><div class="mc-label">Total Trades</div><div class="mc-value neu" id="m-trades">—</div></div>
+          </div>
+          <div class="chart-wrap"><canvas id="eqChart"></canvas></div>
+        </div>
+
+        <!-- NIVEL 1 -->
+        <div class="panel">
+          <div class="panel-title">Nivel 1 — Críticas</div>
+          <div class="metrics-grid">
+            <div class="mc"><div class="mc-label">Profit Factor</div><div class="mc-value" id="a-pf">—</div></div>
+            <div class="mc"><div class="mc-label">EV (profit/trades)</div><div class="mc-value" id="a-ev">—</div><div class="mc-hint">% medio por trade</div></div>
+            <div class="mc"><div class="mc-label">EV en R</div><div class="mc-value" id="a-evn">—</div><div class="mc-hint">EV / |avg loss|</div></div>
+            <div class="mc"><div class="mc-label">Avg Win</div><div class="mc-value pos" id="a-win">—</div></div>
+            <div class="mc"><div class="mc-label">Avg Loss</div><div class="mc-value neg" id="a-loss">—</div></div>
+            <div class="mc"><div class="mc-label">Avg R:R</div><div class="mc-value neu" id="a-rr">—</div></div>
+          </div>
+        </div>
+
+        <!-- NIVEL 2 -->
+        <div class="panel">
+          <div class="panel-title">Nivel 2 — Donde se separa el dinero real</div>
+          <div class="metrics-grid">
+            <div class="mc"><div class="mc-label">Ulcer Index</div><div class="mc-value" id="a-ulcer">—</div><div class="mc-hint">menor = mejor</div></div>
+            <div class="mc"><div class="mc-label">Recovery Factor</div><div class="mc-value" id="a-recovery">—</div></div>
+            <div class="mc"><div class="mc-label">Winrate Edge</div><div class="mc-value" id="a-wr-edge">—</div><div class="mc-hint">vs breakeven</div></div>
+            <div class="mc"><div class="mc-label">Breakeven WR</div><div class="mc-value neu" id="a-be-wr">—</div></div>
+            <div class="mc"><div class="mc-label">Dur. Media Trade</div><div class="mc-value neu" id="a-dur-avg">—</div></div>
+            <div class="mc"><div class="mc-label">Max Consec. Losses</div><div class="mc-value neg" id="a-consec">—</div></div>
+          </div>
+        </div>
+
+        <!-- NIVEL 3 -->
+        <div class="panel">
+          <div class="panel-title">Nivel 3 — Edge Profesional</div>
+          <div class="metrics-grid">
+            <div class="mc"><div class="mc-label">% Big Wins</div><div class="mc-value" id="a-bigwins">—</div><div class="mc-hint">&gt;2x avg win</div></div>
+            <div class="mc"><div class="mc-label">Skewness</div><div class="mc-value" id="a-skew">—</div><div class="mc-hint">+ = buenos outliers</div></div>
+            <div class="mc"><div class="mc-label">Kurtosis</div><div class="mc-value" id="a-kurt">—</div><div class="mc-hint">alto = colas pesadas</div></div>
+            <div class="mc"><div class="mc-label">Equity Slope</div><div class="mc-value" id="a-slope">—</div></div>
+            <div class="mc">
+              <div class="mc-label">Equity R²</div>
+              <div class="mc-value" id="a-smooth">—</div>
+              <div class="sbar-bg"><div class="sbar-fill" id="smoothBar" style="width:0%"></div></div>
+            </div>
+            <div class="mc"><div class="mc-label">Consistency Score</div><div class="mc-value" id="a-consistency">—</div><div class="mc-hint">% meses positivos</div></div>
+          </div>
+        </div>
+
+        <!-- TRADES -->
+        <div class="panel">
+          <div class="panel-title">Trades</div>
+          <div class="trades-scroll">
+            <table>
+              <thead><tr><th>#</th><th>Entry</th><th>Exit</th><th>Return %</th><th>PnL ($)</th><th>Estado</th></tr></thead>
+              <tbody id="tradesBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// CATÁLOGO DE INDICADORES (cacheado del servidor)
+// ─────────────────────────────────────────────────────────────
+let CATALOG = null;
+
+
+// Catálogo por defecto (se sobreescribe con /indicators)
+const DEFAULT_CATALOG = {
+  rsi:       { name:"RSI",              conditions:["crosses_above","crosses_below","above","below"], needs_value:true,  params:[{key:"period",label:"Periodo",default:14}] },
+  ema:       { name:"EMA",              conditions:["price_above","price_below"],                    needs_value:false, params:[{key:"period",label:"Periodo",default:20}] },
+  sma:       { name:"SMA",              conditions:["price_above","price_below"],                    needs_value:false, params:[{key:"period",label:"Periodo",default:50}] },
+  macd:      { name:"MACD",             conditions:["crosses_above","crosses_below","above","below"],needs_value:true,  params:[{key:"fast",label:"Rápida",default:12},{key:"slow",label:"Lenta",default:26},{key:"signal",label:"Signal",default:9}] },
+  stoch:     { name:"Stoch",            conditions:["crosses_above","crosses_below","above","below"],needs_value:true,  params:[{key:"k_period",label:"%K",default:14},{key:"d_period",label:"%D",default:3}] },
+  bb:        { name:"Bollinger",        conditions:["price_above","price_below"],                    needs_value:false, params:[{key:"period",label:"Periodo",default:20},{key:"std",label:"Std",default:2}] },
+  atr:       { name:"ATR",              conditions:["above","below"],                                needs_value:true,  params:[{key:"period",label:"Periodo",default:14}] },
+  liquidity:     { name:"Liquidity Sweep", conditions:["is_true"], needs_value:false,
+    params:[{key:"strength",label:"Fuerza pivot",default:25},{key:"del_after",label:"Expirar tras (barras)",default:288}] },
+  rsi_divergence:{ name:"RSI Divergence",  conditions:["is_true"], needs_value:false,
+    params:[{key:"rsi_period",label:"RSI Period",default:14}] },
+  session:       { name:"Filtro Horario",         conditions:["is_true"], needs_value:false,
+    params:[{key:"hour_from",label:"Hora inicio",default:7},{key:"hour_to",label:"Hora fin",default:11}],
+    hint:"Añade dos veces para dos rangos horarios" },
+  sl_filter:     { name:"Filtro SL (pips)",        conditions:["is_true"], needs_value:false,
+    params:[{key:"min_pips",label:"SL mín (pips)",default:4.5},{key:"max_pips",label:"SL máx (pips)",default:35},{key:"pip_size",label:"Pip size",default:0.0001}] },
+  rr_mct:        { name:"Filtro RR Mínimo MCT",    conditions:["is_true"], needs_value:false,
+    params:[{key:"min_rr",label:"RR mínimo",default:1.2},{key:"pip_size",label:"Pip size",default:0.0001}] },
+  mct_exit:      { name:"MCT Protocol (salida)",   conditions:["is_true"], needs_value:false,
+    params:[{key:"rr_threshold",label:"RR para Fib 0.71",default:3},{key:"pip_size",label:"Pip size",default:0.0001}] },
+};
+
+const CONDITION_LABELS = {
+  crosses_above: "cruza ↑",
+  crosses_below: "cruza ↓",
+  above:         "> valor",
+  below:         "< valor",
+  price_above:   "precio >",
+  price_below:   "precio <",
+  is_true:       "activo",
+};
+
+// ─────────────────────────────────────────────────────────────
+// BUILDER STATE
+// ─────────────────────────────────────────────────────────────
+let entryConfs = [];
+let exitConfs  = [];
+let confIdCounter = 0;
+
+function getApiUrl()  { return document.getElementById('apiUrl').value.replace(/\/$/, ''); }
+function getApiKey()  { return document.getElementById('apiKey').value.trim(); }
+function getHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  const k = getApiKey();
+  if (k) h['X-Api-Key'] = k;
+  return h;
+}
+
+// ─────────────────────────────────────────────────────────────
+// RENDER DE UNA FILA DE CONFIRMACIÓN
+// ─────────────────────────────────────────────────────────────
+function renderConfRow(conf, type) {
+  const catalog  = CATALOG || DEFAULT_CATALOG;
+  const indInfo  = catalog[conf.indicator] || catalog.rsi;
+  const isEntry  = type === 'entry';
+  const listId   = isEntry ? 'entry-list' : 'exit-list';
+  const list     = document.getElementById(listId);
+  const confs    = isEntry ? entryConfs : exitConfs;
+  const idx      = confs.indexOf(conf);
+
+  // Remove empty state if present
+  const empty = list.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  const row = document.createElement('div');
+  row.className = `conf-row ${isEntry ? 'entry-row' : 'exit-row'}`;
+  row.dataset.id = conf.id;
+
+  // Build params HTML
+  let paramsHtml = indInfo.params.map(p => `
+    <input class="conf-input-sm" type="number"
+      data-param="${p.key}" value="${conf.params[p.key] ?? p.default}"
+      title="${p.label}" placeholder="${p.label}"
+      onchange="updateParam(${conf.id},'${type}','${p.key}',this.value)">
+  `).join('<span class="conf-tag">·</span>');
+
+  // Condition select
+  const condOptions = indInfo.conditions.map(c =>
+    `<option value="${c}" ${conf.condition === c ? 'selected' : ''}>${CONDITION_LABELS[c] || c}</option>`
+  ).join('');
+
+  // Value input (only if needed)
+  const valueHtml = indInfo.needs_value
+    ? `<input class="conf-input-sm" type="number" value="${conf.value ?? ''}"
+         placeholder="val" title="Valor"
+         onchange="updateValue(${conf.id},'${type}',this.value)">`
+    : '';
+
+  // Indicator select
+  const indOptions = Object.entries(catalog).map(([k, v]) =>
+    `<option value="${k}" ${conf.indicator === k ? 'selected' : ''}>${v.name}</option>`
+  ).join('');
+
+  row.innerHTML = `
+    <span class="conf-num">${idx + 1}</span>
+    <select class="conf-select" onchange="updateIndicator(${conf.id},'${type}',this.value)">
+      ${indOptions}
+    </select>
+    ${paramsHtml}
+    <select class="conf-select" onchange="updateCondition(${conf.id},'${type}',this.value)">
+      ${condOptions}
+    </select>
+    ${valueHtml}
+    <button class="btn-del" onclick="removeConf(${conf.id},'${type}')" title="Eliminar">×</button>
+  `;
+
+  list.appendChild(row);
+}
+
+function refreshList(type) {
+  const listId = type === 'entry' ? 'entry-list' : 'exit-list';
+  const confs  = type === 'entry' ? entryConfs   : exitConfs;
+  const list   = document.getElementById(listId);
+  list.innerHTML = '';
+  if (confs.length === 0) {
+    list.innerHTML = '<div class="empty-state">Sin confirmaciones. Añade al menos una.</div>';
+    return;
+  }
+  confs.forEach(c => renderConfRow(c, type));
+}
+
+function addConfirmation(type) {
+  const catalog = CATALOG || DEFAULT_CATALOG;
+  const firstInd = Object.keys(catalog)[0];
+  const info     = catalog[firstInd];
+  const params   = {};
+  info.params.forEach(p => params[p.key] = p.default);
+
+  const conf = {
+    id:        ++confIdCounter,
+    indicator: firstInd,
+    params,
+    condition: info.conditions[0],
+    value:     info.needs_value ? 30 : null,
+  };
+
+  if (type === 'entry') entryConfs.push(conf);
+  else                   exitConfs.push(conf);
+
+  refreshList(type);
+}
+
+function removeConf(id, type) {
+  if (type === 'entry') entryConfs = entryConfs.filter(c => c.id !== id);
+  else                   exitConfs  = exitConfs.filter(c => c.id !== id);
+  refreshList(type);
+}
+
+function updateIndicator(id, type, newInd) {
+  const confs   = type === 'entry' ? entryConfs : exitConfs;
+  const conf    = confs.find(c => c.id === id);
+  const catalog = CATALOG || DEFAULT_CATALOG;
+  const info    = catalog[newInd];
+  if (!conf || !info) return;
+  conf.indicator = newInd;
+  conf.params    = {};
+  info.params.forEach(p => conf.params[p.key] = p.default);
+  conf.condition = info.conditions[0];
+  conf.value     = info.needs_value ? 30 : null;
+  refreshList(type);
+}
+
+function updateParam(id, type, key, val) {
+  const confs = type === 'entry' ? entryConfs : exitConfs;
+  const conf  = confs.find(c => c.id === id);
+  if (conf) conf.params[key] = parseFloat(val);
+}
+
+function updateCondition(id, type, val) {
+  const confs = type === 'entry' ? entryConfs : exitConfs;
+  const conf  = confs.find(c => c.id === id);
+  if (conf) conf.condition = val;
+}
+
+function updateValue(id, type, val) {
+  const confs = type === 'entry' ? entryConfs : exitConfs;
+  const conf  = confs.find(c => c.id === id);
+  if (conf) conf.value = parseFloat(val);
+}
+
+// ─────────────────────────────────────────────────────────────
+// BUILD CONFIG JSON
+// ─────────────────────────────────────────────────────────────
+function buildConfig() {
+  return {
+    market: {
+      ticker:    document.getElementById('ticker').value.trim(),
+      timeframe: document.getElementById('timeframe').value,
+      start:     document.getElementById('start').value,
+      end:       document.getElementById('end').value,
+    },
+    risk: {
+      capital:  parseFloat(document.getElementById('capital').value),
+      fees:     parseFloat(document.getElementById('fees').value) / 100,
+      slippage: 0.0005,
+      size:     0.99,
+    },
+    strategy: {
+      entry_confirmations: entryConfs.map(c => ({
+        indicator: c.indicator,
+        params:    c.params,
+        condition: c.condition,
+        ...(c.value !== null ? { value: c.value } : {}),
+      })),
+      exit_confirmations: exitConfs.map(c => ({
+        indicator: c.indicator,
+        params:    c.params,
+        condition: c.condition,
+        ...(c.value !== null ? { value: c.value } : {}),
+      })),
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// RUN BACKTEST
+// ─────────────────────────────────────────────────────────────
+let chart = null;
+
+async function runBacktest() {
+  if (entryConfs.length === 0) { showError("Añade al menos una confirmación de entrada."); return; }
+  if (exitConfs.length  === 0) { showError("Añade al menos una confirmación de salida.");  return; }
+
+  const btn    = document.getElementById('runBtn');
+  const spinner = document.getElementById('spinner');
+  const btnText = document.getElementById('btnText');
+  const errBox  = document.getElementById('error-box');
+  const results = document.getElementById('results');
+
+  btn.disabled = true;
+  spinner.style.display = 'block';
+  btnText.textContent   = 'Calculando...';
+  errBox.style.display  = 'none';
+  results.style.display = 'none';
+
+  try {
+    const config = buildConfig();
+    const res    = await fetch(`${getApiUrl()}/strategy`, {
+      method:  'POST',
+      headers: getHeaders(),
+      body:    JSON.stringify(config),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+    render(data);
+    results.style.display = 'block';
+    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    btnText.textContent   = '▶ Ejecutar Backtest';
+  }
+}
+
+function showError(msg) {
+  const b = document.getElementById('error-box');
+  b.textContent   = '❌  ' + msg;
+  b.style.display = 'block';
+}
+
+// ─────────────────────────────────────────────────────────────
+// RENDER RESULTS
+// ─────────────────────────────────────────────────────────────
+function render(data) {
+  const s = data.summary  || {};
+  const a = data.analysis || {};
+
+  // Edge Score
+  const es   = a.edge_score || 0;
+  const esEl = document.getElementById('edge-score-num');
+  esEl.textContent = es.toFixed(1);
+  esEl.style.color = es >= 75 ? 'var(--accent)' : es >= 50 ? 'var(--orange)' : 'var(--red)';
+  const lbEl = document.getElementById('edge-label');
+  lbEl.textContent = a.edge_label || '—';
+  lbEl.style.color = es >= 75 ? 'var(--accent)' : es >= 50 ? 'var(--orange)' : 'var(--red)';
+  setTimeout(() => document.getElementById('edge-bar').style.width = es + '%', 100);
+
+  // Summary
+  setVal('m-ret',    s.strategy_return_pct, '%', true);
+  setVal('m-bh',     s.buyhold_return_pct,  '%', false);
+  document.getElementById('m-val').textContent    = '$' + num(s.final_value);
+  setVal('m-sharpe', s.sharpe_ratio,        '',   true);
+  document.getElementById('m-dd').textContent     = fmt(s.max_drawdown_pct) + '%';
+  document.getElementById('m-dd-abs').textContent = '-$' + num(s.max_drawdown_abs);
+  setVal('m-wr',     s.win_rate_pct,        '%',  false);
+  document.getElementById('m-trades').textContent = s.total_trades || '—';
+
+  // Nivel 1
+  const pfEl = document.getElementById('a-pf');
+  pfEl.textContent = (a.profit_factor || 0).toFixed(2);
+  pfEl.className   = 'mc-value ' + ((a.profit_factor||0) >= 1.5 ? 'pos' : (a.profit_factor||0) >= 1 ? 'neu' : 'neg');
+  setVal('a-ev',  a.expectancy_pct,       '%', true);
+  setVal('a-evn', a.expectancy_normalized, '', true);
+  document.getElementById('a-win').textContent  = '+' + fmt(a.avg_win_pct)  + '%';
+  document.getElementById('a-loss').textContent = fmt(a.avg_loss_pct) + '%';
+  document.getElementById('a-rr').textContent   = (a.avg_rr || 0).toFixed(2);
+
+  // Nivel 2
+  const uiEl = document.getElementById('a-ulcer');
+  uiEl.textContent = (a.ulcer_index || 0).toFixed(2);
+  uiEl.className   = 'mc-value ' + ((a.ulcer_index||0) < 5 ? 'pos' : (a.ulcer_index||0) < 15 ? 'neu' : 'neg');
+  const rfEl = document.getElementById('a-recovery');
+  rfEl.textContent = (a.recovery_factor || 0).toFixed(2);
+  rfEl.className   = 'mc-value ' + ((a.recovery_factor||0) >= 2 ? 'pos' : (a.recovery_factor||0) >= 1 ? 'neu' : 'neg');
+  setVal('a-wr-edge', a.winrate_edge, '%', true);
+  document.getElementById('a-be-wr').textContent   = (a.breakeven_winrate || 0).toFixed(1) + '%';
+  document.getElementById('a-dur-avg').textContent = (a.avg_trade_duration_days || 0).toFixed(1) + 'd';
+  document.getElementById('a-consec').textContent  = (a.max_consec_losses || 0) + ' trades';
+
+  // Nivel 3
+  document.getElementById('a-bigwins').textContent = fmt(a.pct_big_wins) + '%';
+  const skEl = document.getElementById('a-skew');
+  skEl.textContent = (a.skewness || 0).toFixed(3);
+  skEl.className   = 'mc-value ' + ((a.skewness||0) > 0 ? 'pos' : 'neg');
+  const kuEl = document.getElementById('a-kurt');
+  kuEl.textContent = (a.kurtosis || 0).toFixed(3);
+  kuEl.className   = 'mc-value ' + ((a.kurtosis||0) < 3 ? 'pos' : 'neg');
+  const slEl = document.getElementById('a-slope');
+  slEl.textContent = (a.equity_slope || 0).toFixed(4);
+  slEl.className   = 'mc-value ' + ((a.equity_slope||0) > 0 ? 'pos' : 'neg');
+  const sm = a.equity_r_squared || 0;
+  const smEl = document.getElementById('a-smooth');
+  smEl.textContent = sm.toFixed(2);
+  smEl.className   = 'mc-value ' + (sm > .7 ? 'pos' : sm > .4 ? 'neu' : 'neg');
+  setTimeout(() => document.getElementById('smoothBar').style.width = (sm * 100) + '%', 100);
+  const csEl = document.getElementById('a-consistency');
+  csEl.textContent = (a.consistency_score || 0).toFixed(1) + '%';
+  csEl.className   = 'mc-value ' + ((a.consistency_score||0) >= 60 ? 'pos' : (a.consistency_score||0) >= 40 ? 'neu' : 'neg');
+
+  // Chart
+  if (chart) chart.destroy();
+  const eq  = data.equity_curve || [];
+  const ctx = document.getElementById('eqChart').getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 180);
+  grad.addColorStop(0, 'rgba(0,255,136,.18)');
+  grad.addColorStop(1, 'rgba(0,255,136,0)');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels:   eq.map(p => p.date),
+      datasets: [{ data: eq.map(p => p.value), borderColor: 'rgba(0,255,136,.9)', backgroundColor: grad, borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' $' + num(c.raw) } } },
+      scales: {
+        x: { ticks: { color:'#4a5568', font:{family:'Space Mono',size:10}, maxTicksLimit:6 }, grid:{color:'#1c2530'} },
+        y: { ticks: { color:'#4a5568', font:{family:'Space Mono',size:10}, callback: v => '$'+v.toLocaleString() }, grid:{color:'#1c2530'} },
+      }
+    }
+  });
+
+  // Trades
+  const tbody = document.getElementById('tradesBody');
+  tbody.innerHTML = '';
+  (data.trades || []).forEach(t => {
+    const c = t.status === 'win' ? 'pos' : 'neg';
+    tbody.innerHTML += `<tr>
+      <td style="color:var(--muted)">${t.trade_id}</td>
+      <td>${t.entry_date}</td><td>${t.exit_date}</td>
+      <td class="${c}">${t.return_pct > 0 ? '+' : ''}${t.return_pct.toFixed(2)}%</td>
+      <td class="${c}">${t.pnl > 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</td>
+      <td><span class="badge ${t.status}">${t.status.toUpperCase()}</span></td>
+    </tr>`;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+function fmt(v)  { return v == null ? '—' : (v > 0 ? '+' : '') + parseFloat(v).toFixed(2); }
+function num(v)  { return v == null ? '—' : parseFloat(v).toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function setVal(id, v, suf, colorize) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = fmt(v) + suf;
+  if (colorize) el.className = 'mc-value ' + (parseFloat(v) > 0 ? 'pos' : 'neg');
+}
+
+// ─────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────
+async function init() {
+  document.getElementById('end').value = new Date().toISOString().split('T')[0];
+
+  // Intentar cargar catálogo del servidor
+  try {
+    const res = await fetch(`${getApiUrl()}/indicators`, { headers: getHeaders() });
+    if (res.ok) {
+      const data = await res.json();
+      CATALOG = data.indicators;
+    }
+  } catch(e) {
+    // Usar catálogo por defecto
+  }
+
+  // Añadir confirmaciones de ejemplo
+  addConfirmation('entry');
+  addConfirmation('entry');
+  addConfirmation('exit');
+}
+
+init();
+</script>
+</body>
+</html>
