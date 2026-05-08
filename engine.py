@@ -1017,9 +1017,10 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
 
     # ── Pre-computar filtros de sesión y SL ──
     session_series = []
+    has_sl_filter = False
     sl_min_pips = 4.5
     sl_max_pips = 35.0
-    pip_size    = 0.00001
+    pip_size    = 0.0001
     min_rr      = 1.2
     rr_threshold = 3.0
 
@@ -1032,19 +1033,20 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                                        hour_to=int(p.get("hour_to", 11)))
             session_series.append(s.values)
         elif ind == "sl_filter":
+            has_sl_filter = True
             sl_min_pips = float(p.get("min_pips", 4.5))
             sl_max_pips = float(p.get("max_pips", 35.0))
-            pip_size    = float(p.get("pip_size", 0.00001))
+            pip_size    = float(p.get("pip_size", 0.0001))
         elif ind == "rr_mct":
             min_rr   = float(p.get("min_rr", 1.2))
-            pip_size = float(p.get("pip_size", 0.00001))
+            pip_size = float(p.get("pip_size", 0.0001))
 
     for c in exit_confs:
         ind = c.get("indicator", "")
         p   = c.get("params", {})
         if ind == "mct_exit":
             rr_threshold = float(p.get("rr_threshold", 3.0))
-            pip_size     = float(p.get("pip_size", 0.00001))
+            pip_size     = float(p.get("pip_size", 0.0001))
 
     has_cut_early = any(c.get("indicator") == "cut_early" for c in exit_confs)
 
@@ -1111,9 +1113,10 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                 sl_price = float(sl_bull[i]) if direction == 'bull' else float(sl_bear[i])
                 if np.isnan(sl_price):
                     continue
-                sl_pips = abs(price - sl_price) / pip_size
-                if not (sl_min_pips <= sl_pips <= sl_max_pips):
-                    continue
+                if has_sl_filter:
+                    sl_pips = abs(price - sl_price) / pip_size
+                    if not (sl_min_pips <= sl_pips <= sl_max_pips):
+                        continue
 
                 # ── Validar RR mínimo ──
                 ol_price = float(ol_bull[i]) if direction == 'bull' else float(ol_bear[i])
