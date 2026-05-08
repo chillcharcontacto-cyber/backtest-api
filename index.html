@@ -220,11 +220,6 @@ tr:hover td { background: rgba(255,255,255,.015); }
       <div id="error-box"></div>
       <div id="results">
 
-        <!-- EXPORT BUTTON -->
-        <button id="exportBtn" onclick="exportPineScript()" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--accent);font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;padding:10px 14px;border-radius:8px;cursor:pointer;margin-bottom:14px;transition:border-color .2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-          ⬇ Export to TradingView
-        </button>
-
         <!-- EDGE SCORE -->
         <div class="panel">
           <div class="panel-title">Edge Score</div>
@@ -687,7 +682,7 @@ function render(data) {
     const c = t.status === 'win' ? 'pos' : 'neg';
     tbody.innerHTML += `<tr>
       <td style="color:var(--muted)">${t.trade_id}</td>
-      <td style="font-size:10px" class="${t.direction==='bull'?'pos':'neg'}">${t.direction||'—'}</td>
+      <td style="color:${t.direction==='bull'?'var(--accent)':'var(--red)';font-size:10px}">${t.direction||'—'}</td>
       <td>${t.entry_date}</td><td>${t.exit_date}</td>
       <td class="${c}">${t.return_pct > 0 ? '+' : ''}${t.return_pct.toFixed(2)}%</td>
       <td class="${c}">${t.pnl > 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</td>
@@ -757,35 +752,11 @@ async function init() {
   addConfirmationWithConfig('entry', 'bos',           {liq_strength:25});
   addConfirmationWithConfig('entry', 'session',       {hour_from:7,  hour_to:11});
   addConfirmationWithConfig('entry', 'session',       {hour_from:14, hour_to:17});
-  addConfirmationWithConfig('entry', 'sl_filter',     {min_pips:4.5, max_pips:35, pip_size:0.00001});
-  addConfirmationWithConfig('entry', 'rr_mct',        {min_rr:1.2,   pip_size:0.00001});
+  addConfirmationWithConfig('entry', 'sl_filter',     {min_pips:4.5, max_pips:35, pip_size:0.0001});
+  addConfirmationWithConfig('entry', 'rr_mct',        {min_rr:1.2,   pip_size:0.0001});
   // ── Salida ──
-  addConfirmationWithConfig('exit',  'mct_exit',      {rr_threshold:3, pip_size:0.00001});
+  addConfirmationWithConfig('exit',  'mct_exit',      {rr_threshold:3, pip_size:0.0001});
   addConfirmationWithConfig('exit',  'cut_early',     {});
-}
-
-async function exportPineScript() {
-  const apiUrl = document.getElementById('apiUrl').value.replace(/\/+$/, '');
-  const btn = document.getElementById('exportBtn');
-  btn.textContent = '⏳ Generating...';
-  btn.disabled = true;
-  try {
-    const config = buildConfig();
-    const res = await fetch(`${apiUrl}/export/pinescript`, {
-      method: 'POST', headers: getHeaders(), body: JSON.stringify(config),
-    });
-    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Export failed'); }
-    const text   = await res.text();
-    const blob   = new Blob([text], { type: 'text/plain' });
-    const url    = URL.createObjectURL(blob);
-    const a      = document.createElement('a');
-    const ticker = document.getElementById('ticker').value.trim();
-    const start  = document.getElementById('start').value;
-    const end    = document.getElementById('end').value;
-    a.href = url; a.download = `MCT_${ticker}_${start}_${end}.pine`; a.click();
-    URL.revokeObjectURL(url);
-  } catch(e) { alert('Export error: ' + e.message); }
-  finally { btn.textContent = '⬇ Export to TradingView'; btn.disabled = false; }
 }
 
 init();
