@@ -85,13 +85,25 @@ Exit: SL hit / MCT TP (OL, or Fib 0.71 if RR ≥ rr_threshold) / Cut Early
 
 ---
 
-## Bug fixed (2026-05-08)
+## Bugs fixed (2026-05-09)
 
 **`engine.py::simulate()` — SL filter was always active with wrong pip_size**
 
 - `pip_size` default was `0.00001` (should be `0.0001`, matching INDICATOR_CATALOG)
 - The SL pip-range check ran unconditionally — killed all trades on stocks/crypto and most forex setups
-- **Fix:** corrected `pip_size` default to `0.0001` in all three places; SL pip filter now only runs when `sl_filter` is explicitly in `entry_confirmations`
+- **Fix:** corrected `pip_size` default to `0.0001`; SL pip filter now only runs when `sl_filter` is explicitly in `entry_confirmations`
+
+**`index.html` — frontend was sending wrong pip_size to API**
+
+- Default MCT config in `init()` sent `pip_size:0.00001` for `sl_filter`, `rr_mct`, and `mct_exit`
+- This overrode the backend fix, keeping the filter 10x tighter than intended
+- **Fix:** corrected all three to `pip_size:0.0001` in the frontend defaults
+
+**`index.html` — file was deleted from repo, restored from wrong commit**
+
+- `index.html` had been deleted from `main`; restore accidentally used commit `88e6002` (765 lines, older) instead of `d5075a1` (794 lines, last working version)
+- Caused `addConfirmation is not defined` error and missing default MCT confirmations on page load
+- **Fix:** restored from correct commit `d5075a1` with pip_size fix applied on top
 
 ---
 
