@@ -1074,6 +1074,7 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
         "session_blocked": 0,
         "sl_nan":          0,
         "sl_pip_blocked":  0,
+        "sl_pips_blocked_samples": [],   # actual pip values blocked (up to 20)
         "ol_nan":          0,
         "rr_blocked":      0,
         "entries":         0,
@@ -1139,6 +1140,8 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                     sl_pips = abs(price - sl_price) / pip_size
                     if not (sl_min_pips <= sl_pips <= sl_max_pips):
                         dbg["sl_pip_blocked"] += 1
+                        if len(dbg["sl_pips_blocked_samples"]) < 20:
+                            dbg["sl_pips_blocked_samples"].append(round(sl_pips, 2))
                         continue
 
                 # ── Validar RR mínimo ──
