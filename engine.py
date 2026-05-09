@@ -1077,6 +1077,7 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
         "sl_pips_blocked_samples": [],   # actual pip values blocked (up to 20)
         "ol_nan":          0,
         "rr_blocked":      0,
+        "rr_blocked_samples": [],        # actual (sl_pips, tp_pips, rr) blocked (up to 20)
         "entries":         0,
     }
 
@@ -1151,8 +1152,19 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                     continue
                 sl_dist = abs(price - sl_price)
                 tp_dist = abs(ol_price - price)
-                if sl_dist <= 0 or tp_dist / sl_dist < min_rr:
+                actual_rr = (tp_dist / sl_dist) if sl_dist > 0 else 0
+                if sl_dist <= 0 or actual_rr < min_rr:
                     dbg["rr_blocked"] += 1
+                    if len(dbg["rr_blocked_samples"]) < 20:
+                        dbg["rr_blocked_samples"].append({
+                            "entry": round(price, 5),
+                            "sl":    round(sl_price, 5),
+                            "ol":    round(ol_price, 5),
+                            "sl_pips": round(sl_dist / pip_size, 2),
+                            "tp_pips": round(tp_dist / pip_size, 2),
+                            "rr":    round(actual_rr, 3),
+                            "dir":   direction,
+                        })
                     continue
 
                 # ── ENTRADA ──
