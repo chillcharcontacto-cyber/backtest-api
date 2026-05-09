@@ -1071,6 +1071,7 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
         "div_found":       0,
         "bos_hit":         0,
         "dir_mismatch":    0,
+        "ol_expired":      0,   # sweep OL already blown through at entry bar
         "session_blocked": 0,
         "sl_nan":          0,
         "sl_pip_blocked":  0,
@@ -1125,6 +1126,15 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                     continue
 
                 direction = 'bull' if bos_val == 1.0 else 'bear'
+
+                # ── Validar que el OL del sweep sigue del lado correcto ──
+                # Si el precio ya atravesó el OL, el sweep está consumido
+                if direction == 'bear' and price <= sw.ol_price:
+                    dbg["ol_expired"] += 1
+                    continue  # OL ya perforado — precio debajo del target bajista
+                if direction == 'bull' and price >= sw.ol_price:
+                    dbg["ol_expired"] += 1
+                    continue  # OL ya perforado — precio encima del target alcista
 
                 # ── Validar sesión horaria ──
                 in_session = any(s[i] == 1.0 for s in session_series) if session_series else True
