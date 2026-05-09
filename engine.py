@@ -1065,6 +1065,20 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
     exit_signals  = 0
     sweep_idx     = 0
 
+    # ── Debug funnel counters ──
+    dbg = {
+        "sweeps_total":    len(sweeps),
+        "div_found":       0,
+        "bos_hit":         0,
+        "dir_mismatch":    0,
+        "session_blocked": 0,
+        "sl_nan":          0,
+        "sl_pip_blocked":  0,
+        "ol_nan":          0,
+        "rr_blocked":      0,
+        "entries":         0,
+    }
+
     for i in range(1, n):
         price = float(prices[i])
         date  = str(dates[i])[:10]
@@ -1087,6 +1101,8 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                         sweep_idx = sw_i + 1
                     continue
 
+                dbg["div_found"] += 1
+
                 # ── Hay sweep + divergencia → buscar BOS después de div_bar ──
                 if i <= div_bar:
                     continue
@@ -1096,10 +1112,14 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                 if bos_val == 0.0:
                     continue
 
+                dbg["bos_hit"] += 1
+
                 # Dirección del BOS debe ser coherente con el sweep
                 if sw.direction == 'bullish' and bos_val != 1.0:
+                    dbg["dir_mismatch"] += 1
                     continue
                 if sw.direction == 'bearish' and bos_val != -1.0:
+                    dbg["dir_mismatch"] += 1
                     continue
 
                 direction = 'bull' if bos_val == 1.0 else 'bear'
@@ -1107,27 +1127,33 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                 # ── Validar sesión horaria ──
                 in_session = any(s[i] == 1.0 for s in session_series) if session_series else True
                 if not in_session:
+                    dbg["session_blocked"] += 1
                     continue
 
                 # ── Validar SL ──
                 sl_price = float(sl_bull[i]) if direction == 'bull' else float(sl_bear[i])
                 if np.isnan(sl_price):
+                    dbg["sl_nan"] += 1
                     continue
                 if has_sl_filter:
                     sl_pips = abs(price - sl_price) / pip_size
                     if not (sl_min_pips <= sl_pips <= sl_max_pips):
+                        dbg["sl_pip_blocked"] += 1
                         continue
 
                 # ── Validar RR mínimo ──
                 ol_price = float(ol_bull[i]) if direction == 'bull' else float(ol_bear[i])
                 if np.isnan(ol_price):
+                    dbg["ol_nan"] += 1
                     continue
                 sl_dist = abs(price - sl_price)
                 tp_dist = abs(ol_price - price)
                 if sl_dist <= 0 or tp_dist / sl_dist < min_rr:
+                    dbg["rr_blocked"] += 1
                     continue
 
                 # ── ENTRADA ──
+                dbg["entries"] += 1
                 entry_signals += 1
                 exec_price    = price * (1 + slippage)
                 shares        = (cash * size) / exec_price
@@ -1282,6 +1308,7 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
         "final_value":   round(cash, 2),
         "entry_signals": entry_signals,
         "exit_signals":  exit_signals,
+        "debug":         dbg,
     }
 
 
@@ -1643,6 +1670,7 @@ def run_strategy(config: dict) -> dict:
         "trades":       [],
         "equity_curve": [],
         "analysis":     {},
+        "debug":        {},
         "error":        None,
     }
 
@@ -1669,11 +1697,15 @@ def run_strategy(config: dict) -> dict:
         # Simulación
         sim = simulate(data, risk, entry_confs, exit_confs)
 
+        output["debug"] = sim.get("debug", {})
+
         if sim["entry_signals"] == 0:
-            raise ValueError(
-                "No se generaron señales de entrada con estas confirmaciones. "
-                "Prueba a ajustar los parámetros o ampliar el rango de fechas."
+            output["status"] = "no_signals"
+            output["error"]  = (
+                "No se generaron señales de entrada. "
+                "Revisa el campo 'debug' para ver dónde se filtraron las señales."
             )
+            return output
 
         # Métricas
         summary, analysis = compute_metrics(sim, risk, close)

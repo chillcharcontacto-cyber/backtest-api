@@ -348,4 +348,5 @@ def run_strategy_endpoint(config: StrategyConfig, x_api_key: Optional[str] = Hea
     result = run_strategy(config.model_dump())
     if result["status"] == "error":
         raise HTTPException(status_code=400, detail=result["error"])
+    # no_signals: return 200 with debug info so caller can inspect the funnel
     return result
