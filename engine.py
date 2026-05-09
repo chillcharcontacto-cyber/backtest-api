@@ -1105,7 +1105,7 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                 direction = 'bull' if bos_val == 1.0 else 'bear'
 
                 # ── Validar sesión horaria ──
-                in_session = all(s[i] == 1.0 for s in session_series) if session_series else True
+                in_session = any(s[i] == 1.0 for s in session_series) if session_series else True
                 if not in_session:
                     continue
 
