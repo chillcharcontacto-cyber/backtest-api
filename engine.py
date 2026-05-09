@@ -1017,7 +1017,8 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
 
     # ── Pre-computar filtros de sesión y SL ──
     session_series = []
-    has_sl_filter = False
+    has_sl_filter   = False
+    has_divergence  = False   # if rsi_divergence in entry_confs, require div before BOS
     sl_min_pips = 4.5
     sl_max_pips = 35.0
     pip_size    = 0.0001
@@ -1027,7 +1028,9 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
     for c in entry_confs:
         ind = c.get("indicator", "")
         p   = c.get("params", {})
-        if ind == "session":
+        if ind == "rsi_divergence":
+            has_divergence = True
+        elif ind == "session":
             s = compute_session_filter(data,
                                        hour_from=int(p.get("hour_from", 7)),
                                        hour_to=int(p.get("hour_to", 11)))
@@ -1097,18 +1100,24 @@ def simulate(data: pd.DataFrame, risk: dict, entry_confs: list, exit_confs: list
                     break
 
                 # Buscar divergencia dentro del contexto de este sweep
-                div_found, div_bar, div_model = _div_in_sweep_context(div, sw, n)
+                if has_divergence:
+                    div_found_flag, div_bar, div_model = _div_in_sweep_context(div, sw, n)
 
-                if not div_found or div_bar > i:
-                    if not div_found:
-                        sweep_idx = sw_i + 1
-                    continue
+                    if not div_found_flag or div_bar > i:
+                        if not div_found_flag:
+                            sweep_idx = sw_i + 1
+                        continue
 
-                dbg["div_found"] += 1
+                    dbg["div_found"] += 1
 
-                # ── Hay sweep + divergencia → buscar BOS después de div_bar ──
-                if i <= div_bar:
-                    continue
+                    # ── Hay sweep + divergencia → buscar BOS después de div_bar ──
+                    if i <= div_bar:
+                        continue
+                else:
+                    div_bar   = sw.se_bar   # no divergence required — BOS after SE
+                    div_model = "none"
+                    if i <= div_bar:
+                        continue
 
                 # ¿Hay BOS en la barra actual?
                 bos_val = bos_signal[i]
