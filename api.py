@@ -23,16 +23,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backtest_rsi_ema import backtest, INPUT_SCHEMA, TIMEFRAME_FREQ
+from engine import run_strategy, INDICATOR_CATALOG, CONDITION_LABELS
 
 # ─────────────────────────────────────────────────────────────
 # API KEYS
 # ─────────────────────────────────────────────────────────────
-# Las keys se leen de la variable de entorno VALID_API_KEYS
-# Formato: "key1,key2,key3"
-# En Render: Settings → Environment → añadir VALID_API_KEYS
-#
-# Si la variable no está definida, se usa una key de desarrollo
-# IMPORTANTE: en producción siempre define VALID_API_KEYS en Render
 
 def get_valid_keys() -> set:
     raw = os.environ.get("VALID_API_KEYS", "")
@@ -46,7 +41,6 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
     valid_keys = get_valid_keys()
 
     if not valid_keys:
-        # Sin keys configuradas → modo desarrollo, acceso libre
         return True
 
     if not x_api_key:
@@ -69,8 +63,8 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
 # ─────────────────────────────────────────────────────────────
 app = FastAPI(
     title       = "TradingEdgeLabs — Backtesting API",
-    description = "Motor de backtesting RSI + EMA. Requiere API key en header X-Api-Key.",
-    version     = "2.0.0",
+    description = "Motor de backtesting MCT. Requiere API key en header X-Api-Key.",
+    version     = "2.1.0",
 )
 
 app.add_middleware(
@@ -110,6 +104,32 @@ class BacktestConfig(BaseModel):
         }
 
 
+class StrategyConfig(BaseModel):
+    market:   dict = Field(..., description="ticker, timeframe, start, end")
+    risk:     dict = Field(..., description="capital, fees, slippage, size")
+    strategy: dict = Field(..., description="entry_confirmations, exit_confirmations")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "market":   {"ticker": "EURUSD", "timeframe": "5m", "start": "2026-04-01", "end": "2026-04-30"},
+                "risk":     {"capital": 10000, "fees": 0.0, "slippage": 0.0005, "size": 0.99},
+                "strategy": {
+                    "entry_confirmations": [
+                        {"indicator": "bos",       "params": {"liq_strength": 25}, "condition": "is_true"},
+                        {"indicator": "session",   "params": {"hour_from": 7, "hour_to": 11}, "condition": "is_true"},
+                        {"indicator": "sl_filter", "params": {"min_pips": 4.5, "max_pips": 35.0, "pip_size": 0.0001}, "condition": "is_true"},
+                        {"indicator": "rr_mct",    "params": {"min_rr": 1.2, "pip_size": 0.0001}, "condition": "is_true"}
+                    ],
+                    "exit_confirmations": [
+                        {"indicator": "mct_exit",  "params": {"rr_threshold": 3.0, "pip_size": 0.0001}, "condition": "is_true"},
+                        {"indicator": "cut_early", "params": {}, "condition": "is_true"}
+                    ]
+                }
+            }
+        }
+
+
 # ─────────────────────────────────────────────────────────────
 # ENDPOINTS
 # ─────────────────────────────────────────────────────────────
@@ -120,7 +140,7 @@ def health():
     return {
         "status":    "ok",
         "timestamp": datetime.utcnow().isoformat(),
-        "version":   "2.0.0",
+        "version":   "2.1.0",
         "auth":      "enabled" if get_valid_keys() else "disabled (dev mode)",
     }
 
@@ -142,31 +162,40 @@ def schema(x_api_key: Optional[str] = Header(None)):
 
 @app.post("/backtest", tags=["Backtest"])
 def run(config: BacktestConfig, x_api_key: Optional[str] = Header(None)):
-    """
-    Ejecuta un backtest RSI + EMA.
-    Requiere API key en el header: X-Api-Key: tu-clave
-    """
+    """Ejecuta un backtest RSI + EMA."""
     verify_api_key(x_api_key)
-
     result = backtest(config.model_dump())
-
     if result["status"] == "error":
         raise HTTPException(status_code=400, detail=result["error"])
-
     return result
 
 
-# ─────────────────────────────────────────────────────────────
-# ARRANQUE
-# ─────────────────────────────────────────────────────────────
+@app.get("/indicators", tags=["Builder"])
+def get_indicators(x_api_key: Optional[str] = Header(None)):
+    """Catálogo de indicadores disponibles para el builder."""
+    verify_api_key(x_api_key)
+    return {"indicators": INDICATOR_CATALOG, "conditions": CONDITION_LABELS}
+
+
+@app.post("/strategy", tags=["Builder"])
+def run_strategy_endpoint(config: StrategyConfig, x_api_key: Optional[str] = Header(None)):
+    """
+    Ejecuta un backtest MCT. Devuelve debug funnel aunque no haya señales.
+    """
+    verify_api_key(x_api_key)
+    result = run_strategy(config.model_dump())
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["error"])
+    # no_signals returns 200 with debug field so funnel is visible
+    return result
+
+
 @app.post("/export/pinescript", tags=["Export"])
 def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(None)):
     """
-    Runs backtest and returns a Pine Script v6 file with all trades
-    hardcoded as labels and lines at exact timestamps.
+    Runs MCT backtest and returns Pine Script v6 with all trades as labels/lines.
     """
     verify_api_key(x_api_key)
-    from engine import run_strategy
     result = run_strategy(config.model_dump())
     if result["status"] == "error":
         raise HTTPException(status_code=400, detail=result["error"])
@@ -176,7 +205,6 @@ def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(
     tf      = config.market.get("timeframe", "5m")
     start   = config.market.get("start", "")
     end     = config.market.get("end", "")
-
 
     def ts(dt_str):
         """Convert datetime string to Pine timestamp(year,month,day,hour,minute)."""
@@ -231,7 +259,6 @@ def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(
             is_bull    = direction == "bull"
             col_entry  = "color.lime" if is_bull else "color.red"
             col_result = "color.lime" if status == "win" else "color.red"
-            arrow      = "up" if is_bull else "down"
             arrow_sym  = "▲" if is_bull else "▼"
             result_sym = "WIN" if status == "win" else "LOSS"
             ret_str    = f"{ret:+.2f}%"
@@ -243,34 +270,28 @@ def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(
             lines.append(f'')
             lines.append(f'// ── Trade #{tid} {arrow_sym} {entry_dt}→{exit_dt} {result_sym} {ret_str} ──')
 
-            # SS — Sweep Start
             if ss_ts:
                 lines.append(f'if time == {ts(ss_ts)}')
                 lines.append(f'    label.new(bar_index, {"low" if is_bull else "high"}, "#{tid} SS\\n{ss_price}", color=color.new(color.gray,40), textcolor=color.white, size=size.tiny, style={opp_style}, tooltip="Sweep Start")')
 
-            # SE — Sweep End / Sweep Level
             if se_ts:
                 se_col = "color.new(color.lime,30)" if is_bull else "color.new(color.red,30)"
                 lines.append(f'if time == {ts(se_ts)}')
                 lines.append(f'    label.new(bar_index, {"low" if is_bull else "high"}, "#{tid} SWEEP\\n{se_price}", color={se_col}, textcolor=color.black, size=size.tiny, style={opp_style}, tooltip="Sweep Level")')
 
-            # OL — Opposite Level
             if ol_ts:
                 lines.append(f'if time == {ts(ol_ts)}')
                 lines.append(f'    label.new(bar_index, {"high" if is_bull else "low"}, "#{tid} OL\\n{ctx_ol}", color=color.new(color.orange,20), textcolor=color.black, size=size.tiny, style={entry_style}, tooltip="Opposite Level")')
 
-            # DIV — Divergence model
             if div_ts and div_model:
                 div_short = div_model.replace("Model ","M").replace(" — ","\\n")
                 lines.append(f'if time == {ts(div_ts)}')
                 lines.append(f'    label.new(bar_index, {"low" if is_bull else "high"}, "#{tid} DIV\\n{div_short}", color=color.new(color.purple,20), textcolor=color.white, size=size.tiny, style={entry_style}, tooltip="{div_model}")')
 
-            # BOS
             if bos_ts:
                 lines.append(f'if time == {ts(bos_ts)}')
                 lines.append(f'    label.new(bar_index, {bos_price}, "#{tid} BOS {arrow_sym}", color={col_entry}, textcolor=color.black, size=size.small, style={entry_style}, tooltip="Break of Structure")')
 
-            # ENTRY + lines
             div_short2 = (div_model[:20] if div_model else "n/a").replace('"',"'")
             entry_txt = f"#{tid} ENTRY {arrow_sym}\\nEntry:{entry_p}\\nSL:{sl_p}\\nTP:{tp_p}\\nOL:{ol_p}\\n{div_short2}"
             lines.append(f'if time == {ts(entry_dt)}')
@@ -282,11 +303,9 @@ def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(
             if ol_p and round(float(ol_p),5) != round(float(tp_p),5):
                 lines.append(f'    line.new(bar_index, {ol_p}, bar_index+30, {ol_p}, color=color.orange, width=1, style=line.style_dotted)')
 
-            # EXIT
             exit_txt = f"#{tid} {result_sym}\\n{ret_str}\\n{exit_type}"
             lines.append(f'if time == {ts(exit_dt)}')
             lines.append(f'    label.new(bar_index, {tp_p if tp_p else entry_p}, "{exit_txt}", color={col_result}, textcolor=color.black, size=size.small, style={entry_style})')
-
 
     pine_code = '\n'.join(lines)
 
@@ -301,52 +320,3 @@ def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
-
-
-# ─────────────────────────────────────────────────────────────
-# NUEVO — Motor universal de estrategias
-# ─────────────────────────────────────────────────────────────
-from engine import run_strategy, INDICATOR_CATALOG, CONDITION_LABELS
-
-
-class StrategyConfig(BaseModel):
-    market: dict   = Field(..., description="ticker, timeframe, start, end")
-    risk:   dict   = Field(..., description="capital, fees, slippage, size")
-    strategy: dict = Field(..., description="entry_confirmations, exit_confirmations")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "market":   {"ticker": "AAPL", "timeframe": "1d", "start": "2024-01-01", "end": "2024-06-01"},
-                "risk":     {"capital": 10000, "fees": 0.001, "slippage": 0.0005, "size": 0.99},
-                "strategy": {
-                    "entry_confirmations": [
-                        {"indicator": "rsi", "params": {"period": 14}, "condition": "crosses_above", "value": 48},
-                        {"indicator": "ema", "params": {"period": 20}, "condition": "price_above"}
-                    ],
-                    "exit_confirmations": [
-                        {"indicator": "rsi", "params": {"period": 14}, "condition": "crosses_below", "value": 52}
-                    ]
-                }
-            }
-        }
-
-
-@app.get("/indicators", tags=["Builder"])
-def get_indicators(x_api_key: Optional[str] = Header(None)):
-    """Catálogo de indicadores disponibles para el builder."""
-    verify_api_key(x_api_key)
-    return {"indicators": INDICATOR_CATALOG, "conditions": CONDITION_LABELS}
-
-
-@app.post("/strategy", tags=["Builder"])
-def run_strategy_endpoint(config: StrategyConfig, x_api_key: Optional[str] = Header(None)):
-    """
-    Ejecuta un backtest con estrategia personalizada (N confirmaciones).
-    """
-    verify_api_key(x_api_key)
-    result = run_strategy(config.model_dump())
-    if result["status"] == "error":
-        raise HTTPException(status_code=400, detail=result["error"])
-    # no_signals: return 200 with debug info so caller can inspect the funnel
-    return result
