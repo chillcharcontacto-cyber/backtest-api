@@ -2,30 +2,45 @@
 
 ## Last Session Summary
 
-Diagnosed and fixed the root cause of "No se generaron señales de entrada" on tradingedgelabs.com.
+**Fixed Pydantic forward reference crash (500 on /openapi.json)**
+`StrategyConfig` was used as a type annotation in `export_pinescript` (line 162) before being defined (line 312). Python 3.14 + Pydantic v2 strict evaluation caused PydanticUserError at schema generation. Fixed by rewriting `api.py` with all models defined before any endpoint. Deployed and confirmed working.
 
-**Bug found:** `pip_size` was set to `0.00001` (10x too small) in two places:
-- `engine.py` — hardcoded default in `simulate()`, and the SL pip-range filter ran unconditionally on every market
-- `index.html` — frontend explicitly sent `pip_size:0.00001` in `sl_filter`, `rr_mct`, and `mct_exit` default configs
+**Systematic debug funnel built into `engine.py::simulate()`**
+Added `sl_pips_blocked_samples` (list of actual pip values blocked) and `rr_blocked_samples` (full entry/sl/ol/rr data per blocked setup). These made every subsequent diagnosis instant.
 
-Both meant the valid SL distance range was 0.45–3.5 standard pips — too tight for any real forex setup, and completely impossible for stocks/crypto.
+**Root causes found via funnel — chain of bugs in order:**
 
-**Also fixed:** When restoring `index.html` (which had been deleted from the repo), accidentally used the wrong git commit (`88e6002`, 765 lines) instead of the correct last version (`d5075a1`, 794 lines). This broke `addConfirmation is not defined` and wiped the default MCT confirmations on page load. Corrected in a follow-up commit.
+1. `sl_pip_blocked: 9` — all SLs were 47.5 pips, max was 35 → widened to diagnose
+2. `rr_blocked: 9` — OL (TP) only 9.2 pips from entry, SL 41.7 pips → RR = 0.22
+3. Root of bad RR: **stale sweeps** — BOS firing 3+ days after the sweep, price already near OL
+4. **OL expiry check added** — if bear entry ≤ sweep OL (or bull entry ≥ sweep OL), skip. Filters truly expired sweeps. Adds `ol_expired` counter to debug.
+5. **Divergence made optional** — if `rsi_divergence` not in `entry_confirmations`, skip div check entirely. Protocol becomes: Sweep → BOS → Session → SL → RR → Entry. `has_divergence` flag in `simulate()`.
 
-**All changes pushed to `main` → Render + Vercel auto-deployed.**
+**All fixes committed and deployed to Render.**
+
+**Debug funnel now shows:** `sweeps_total, div_found, bos_hit, dir_mismatch, ol_expired, session_blocked, sl_nan, sl_pip_blocked, sl_pips_blocked_samples, ol_nan, rr_blocked, rr_blocked_samples, entries`
+
+---
 
 ## Currently Working On
 
-Waiting for user to confirm that tradingedgelabs.com now shows the default MCT confirmations and returns ~10 trades for EURUSD 5m April 2026.
+**No-divergence test in progress** — user is about to run JSON without `rsi_divergence` in entry_confirmations to isolate whether the rest of the pipeline produces valid trades. Result not yet received.
+
+---
 
 ## Parked / Unfinished
 
-- `/wrap-up` and `/kickoff` slash commands created but need Claude Code restart to be recognised
-- No live test yet confirming the backtest matches the manual journal
+- **`div_found` counter bug** — shows 279,467 from 145 sweeps (increments per-bar inside sweep loop, not per-divergence event). Cosmetic — does not affect entry logic. Low priority.
+- **`max_sweep_age_bars` not implemented** — identified as the next fix: if BOS fires more than X bars after sweep SE, skip. On 5m: 1 day = 288 bars, 2 days = 576 bars. Would kill the stale-sweep RR problem at source.
+- **Bear trade "tp" + "loss"** — TP was hit but 9.2 pip profit erased by 0.1% slippage round-trip. Not a bug per se, consequence of tiny RR.
+- **RSI divergence logic unverified** — `_div_in_sweep_context()` not deeply audited. 4 models (M1 Regular, M2 Sweep, M3 Multiple, M4 Extended). Recommended: build Pine indicator for divergence in separate chat, verify visually on TradingView, then confirm Python logic matches.
+
+---
 
 ## Next Steps
 
-1. User tests tradingedgelabs.com → runs backtest on EURUSD 5m April 2026 with default MCT settings
-2. If ~10 trades returned: export Pine Script → load in TradingView → compare against manual journal
-3. If trades don't match journal: debug the MCT engine logic (sweep detection, divergence models, BOS direction)
-4. Once engine is verified: plan mass backtest across multiple pairs and date ranges
+1. **Get no-divergence test result** — if entries > 0 with normal SL/RR filters, pipeline is sound and divergence is the isolated problem.
+2. **Implement `max_sweep_age_bars`** — add param to `simulate()`, expose via `bos` indicator params in entry_confirmations. Start with 576 bars (2 days on 5m).
+3. **If no-divergence works** → run Pine Script export (`/export/pinescript`) → load in TradingView → visual check.
+4. **Audit RSI divergence** — either in separate Pine chart or by adding more debug to `_div_in_sweep_context()` showing which bars/models are firing and why.
+5. **Once engine verified**: mass backtest across multiple pairs/date ranges.
