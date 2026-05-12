@@ -4,6 +4,22 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-05-13
+
+**EMS engine: all pure functions, no mutable class state**
+Config and Trade are dataclasses (Trade is frozen). Data fetch, indicators, SL finder, and simulate() are all pure functions. Given same inputs -> same outputs. No global state, no side effects outside output.py. Chosen for testability and reproducibility.
+
+**EMS H1 alignment: `floor(t, 1h) - 1h` formula**
+For any M30 bar at time t, last closed H1 bar open = floor(t, 1h) - 1h. Works for both :00 and :30 M30 bars (both see the same last-closed H1). h1_new_bar = (t.minute == 0). This mirrors Pine's `close[1]` + `lookahead_on` behavior without resampling.
+
+**EMS SL gap-down handling: fill at open if open < stop**
+If bar opens below the stop level (gap down), exit price = open[i], not trade_sl. Prevents unrealistic fills at prices that were never traded.
+
+**EMS data: Binance public klines, parquet cache**
+No auth required. Fetches 1000 bars/request with 50ms sleep between requests. First run: ~230 HTTP requests for M30+H1 2017-2026. Subsequent runs: instant from parquet cache. pyarrow added to requirements.txt.
+
+---
+
 ## 2026-05-12
 
 **EMS System built as Pine Script first, Python port second**
