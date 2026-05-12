@@ -2,45 +2,52 @@
 
 ## Last Session Summary
 
-**Fixed Pydantic forward reference crash (500 on /openapi.json)**
-`StrategyConfig` was used as a type annotation in `export_pinescript` (line 162) before being defined (line 312). Python 3.14 + Pydantic v2 strict evaluation caused PydanticUserError at schema generation. Fixed by rewriting `api.py` with all models defined before any endpoint. Deployed and confirmed working.
+**EMS System Pine Script built (`ems_system_m30.pine`)**
+Full Pine Script v5 strategy for BTCUSDT M30 trend-following system:
+- EMA20/50 crossover on M30 as entry trigger
+- H1 EMA50 trend filter (last confirmed H1 close)
+- Structural SL: looks back from crossover candle for most recent valid bearish candle (valid = at least one subsequent candle has Higher High in both wick and body), SL placed at lowest low of that range
+- Exit: first M30 bar after H1 close below H1 EMA100
+- Filters: long only, one trade at a time, min 0.1% risk
+- H1 new-bar detection via `ta.change(h1_t)` (timestamp, not price, to handle flat closes)
+- `max_bars_back=500` required for dynamic loop indexing in `findSL()`
 
-**Systematic debug funnel built into `engine.py::simulate()`**
-Added `sl_pips_blocked_samples` (list of actual pip values blocked) and `rr_blocked_samples` (full entry/sl/ol/rr data per blocked setup). These made every subsequent diagnosis instant.
-
-**Root causes found via funnel — chain of bugs in order:**
-
-1. `sl_pip_blocked: 9` — all SLs were 47.5 pips, max was 35 → widened to diagnose
-2. `rr_blocked: 9` — OL (TP) only 9.2 pips from entry, SL 41.7 pips → RR = 0.22
-3. Root of bad RR: **stale sweeps** — BOS firing 3+ days after the sweep, price already near OL
-4. **OL expiry check added** — if bear entry ≤ sweep OL (or bull entry ≥ sweep OL), skip. Filters truly expired sweeps. Adds `ol_expired` counter to debug.
-5. **Divergence made optional** — if `rsi_divergence` not in `entry_confirmations`, skip div check entirely. Protocol becomes: Sweep → BOS → Session → SL → RR → Entry. `has_divergence` flag in `simulate()`.
-
-**All fixes committed and deployed to Render.**
-
-**Debug funnel now shows:** `sweeps_total, div_found, bos_hit, dir_mismatch, ol_expired, session_blocked, sl_nan, sl_pip_blocked, sl_pips_blocked_samples, ol_nan, rr_blocked, rr_blocked_samples, entries`
+**EMS Python backtest engine -- Phase 1 recon complete**
+Full state audit of the Pine file before any Python written:
+- State inventory: 11 variables documented with types and Pine mechanisms
+- State machine: FLAT/LONG with all transitions, actions, and snapshot moments
+- `findSL()` algorithm documented step-by-step with correct bar-offset math
+- 6 edge cases identified: EMA warmup period, H1 alignment/resampling, EMA formula (pandas `adjust=False`), `findSL` exhaustion, concurrent exit on entry bar, lb=1 boundary validity
+- 5 open questions posed to user (see below) -- waiting for answers before Phase 2
 
 ---
 
 ## Currently Working On
 
-**No-divergence test in progress** — user is about to run JSON without `rsi_divergence` in entry_confirmations to isolate whether the rest of the pipeline produces valid trades. Result not yet received.
+**EMS Python engine -- Phase 2 blocked on user answers to:**
+1. Data source preference (yfinance vs Binance API vs CCXT, or swappable DataLoader)
+2. H1 construction: separate fetch vs resample M30 in-engine
+3. CSV columns: R-multiple only or dollar P&L too
+4. SL hit price: use stop price vs low of bar (gap handling)
+5. Scope: how many years of BTCUSDT M30
 
 ---
 
 ## Parked / Unfinished
 
-- **`div_found` counter bug** — shows 279,467 from 145 sweeps (increments per-bar inside sweep loop, not per-divergence event). Cosmetic — does not affect entry logic. Low priority.
-- **`max_sweep_age_bars` not implemented** — identified as the next fix: if BOS fires more than X bars after sweep SE, skip. On 5m: 1 day = 288 bars, 2 days = 576 bars. Would kill the stale-sweep RR problem at source.
-- **Bear trade "tp" + "loss"** — TP was hit but 9.2 pip profit erased by 0.1% slippage round-trip. Not a bug per se, consequence of tiny RR.
-- **RSI divergence logic unverified** — `_div_in_sweep_context()` not deeply audited. 4 models (M1 Regular, M2 Sweep, M3 Multiple, M4 Extended). Recommended: build Pine indicator for divergence in separate chat, verify visually on TradingView, then confirm Python logic matches.
+**MCT engine (carried from previous session):**
+- No-divergence test result not received -- user was about to run MCT without `rsi_divergence` in entry_confirmations
+- `max_sweep_age_bars` not implemented -- identified fix for stale sweeps where BOS fires days after SE
+- `div_found` counter over-increments (cosmetic, does not affect logic)
+- RSI divergence 4-model logic unaudited (`_div_in_sweep_context()`)
 
 ---
 
 ## Next Steps
 
-1. **Get no-divergence test result** — if entries > 0 with normal SL/RR filters, pipeline is sound and divergence is the isolated problem.
-2. **Implement `max_sweep_age_bars`** — add param to `simulate()`, expose via `bos` indicator params in entry_confirmations. Start with 576 bars (2 days on 5m).
-3. **If no-divergence works** → run Pine Script export (`/export/pinescript`) → load in TradingView → visual check.
-4. **Audit RSI divergence** — either in separate Pine chart or by adding more debug to `_div_in_sweep_context()` showing which bars/models are firing and why.
-5. **Once engine verified**: mass backtest across multiple pairs/date ranges.
+1. **User answers Q1-Q5** above -> proceed to Phase 2 (EMS engine architecture)
+2. **Phase 2**: propose file skeleton, function signatures, pure-function vs class split, unit test strategy per component -- pause for ack
+3. **Phase 3**: implement file-by-file, single concern per commit, pytest green at every step
+4. **Phase 4**: pull N years BTCUSDT M30, full run, per-trade CSV, aggregate stats
+5. **MCT**: follow up on no-divergence test result
+6. **MCT**: implement `max_sweep_age_bars` (suggested: 576 bars = 2 days on 5m)

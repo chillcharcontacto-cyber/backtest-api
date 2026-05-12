@@ -1,0 +1,112 @@
+//@version=5
+strategy("EMS System — BTCUSDT M30", overlay=true,
+     default_qty_type  = strategy.percent_of_equity,
+     default_qty_value = 100,
+     commission_type   = strategy.commission.percent,
+     commission_value  = 0.05,
+     max_bars_back     = 500)
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+i_ema_fast    = input.int  (20,   "EMA Fast",     minval=1)
+i_ema_slow    = input.int  (50,   "EMA Slow",     minval=1)
+i_h1_trend    = input.int  (50,   "H1 Trend EMA", minval=1)
+i_h1_exit     = input.int  (100,  "H1 Exit EMA",  minval=1)
+i_min_risk    = input.float(0.1,  "Min Risk %",   minval=0.01, step=0.01)
+i_sl_lookback = input.int  (50,   "SL Lookback",  minval=5, maxval=200)
+
+// ── M30 EMAs ──────────────────────────────────────────────────────────────────
+ema_fast = ta.ema(close, i_ema_fast)
+ema_slow = ta.ema(close, i_ema_slow)
+
+// ── H1 Data — last confirmed H1 candle (no lookahead bias) ───────────────────
+// close[1] / ema[1] inside security = value of the *just-closed* H1 bar.
+// lookahead_on makes the value available at the start of the next H1 bar
+// (i.e. immediately on the M30 bar that follows the H1 close).
+[h1_c, h1_e50, h1_e100, h1_t] = request.security(
+     syminfo.tickerid, "60",
+     [close[1], ta.ema(close, i_h1_trend)[1], ta.ema(close, i_h1_exit)[1], time[1]],
+     lookahead=barmerge.lookahead_on)
+
+// Detect when a new H1 bar has just closed (time stamp of last H1 bar changed).
+h1_new_bar = ta.change(h1_t) != 0
+
+// ── Conditions ────────────────────────────────────────────────────────────────
+cross_up = ta.crossover(ema_fast, ema_slow)           // EMA20 x EMA50 on M30
+h1_bull  = h1_c > h1_e50                              // H1 trend filter
+h1_exit  = h1_new_bar and (h1_c < h1_e100)            // H1 candle closed below H1 EMA100
+
+// ── SL Finder ─────────────────────────────────────────────────────────────────
+// Must be called on the entry bar (crossover is bar[1] from here).
+//
+// Algorithm:
+//   For each bar going back from crossover (lb = 1, 2, ...):
+//     If that bar is bearish → check whether at least one of the candles
+//     strictly between it and the crossover candle (inclusive of crossover)
+//     has BOTH: high > bearish.high  AND  close > bearish.open.
+//     If valid → SL = lowest low from that bar to crossover bar (both inclusive).
+//     Stop at first valid bearish candle found (most recent).
+findSL() =>
+    result = float(na)
+    for lb = 1 to i_sl_lookback
+        b_off = 1 + lb          // offset from current bar to bearish candidate
+        b_o   = open [b_off]
+        b_c   = close[b_off]
+        b_h   = high [b_off]
+        b_l   = low  [b_off]
+        if b_c < b_o            // bearish candle
+            valid = false
+            for j = 1 to lb    // offsets 1..lb = crossover bar back to just after bearish
+                if high[j] > b_h and close[j] > b_o
+                    valid := true
+                    break
+            if valid
+                lowest = b_l
+                for k = 1 to b_off   // full range: crossover bar → bearish candle
+                    lowest := math.min(lowest, low[k])
+                result := lowest
+                break
+    result
+
+// ── State ─────────────────────────────────────────────────────────────────────
+var float trade_sl = na
+
+// ── Entry ─────────────────────────────────────────────────────────────────────
+// Enter at open of the bar immediately after the crossover candle.
+// Requires: crossover on previous bar, H1 trend up, no open position,
+//           valid SL found, and risk >= 0.1% of entry price.
+if cross_up[1] and h1_bull and strategy.position_size == 0
+    sl = findSL()
+    if not na(sl) and (open - sl) >= open * (i_min_risk / 100.0)
+        trade_sl := sl
+        strategy.entry("Long", strategy.long)
+
+// ── Exit ──────────────────────────────────────────────────────────────────────
+if strategy.position_size > 0
+    strategy.exit("SL", from_entry="Long", stop=trade_sl)
+    if h1_exit
+        strategy.close("Long", comment="H1 EMA100 cross")
+
+if strategy.position_size == 0
+    trade_sl := na
+
+// ── Plots ────────────────────────────────────────────────────────────────────
+plot(ema_fast, "EMA20",     color=color.new(color.blue,   0),  linewidth=1)
+plot(ema_slow, "EMA50",     color=color.new(color.orange, 0),  linewidth=1)
+plot(h1_e50,  "H1 EMA50",  color=color.new(color.teal,   30), linewidth=1)
+plot(h1_e100, "H1 EMA100", color=color.new(color.red,    30), linewidth=1)
+
+// SL level during active trade
+plot(strategy.position_size > 0 ? trade_sl : na, "Stop Loss",
+     color=color.red, linewidth=1, style=plot.style_linebr)
+
+// Entry / exit markers
+plotshape(strategy.position_size > 0 and strategy.position_size[1] == 0,
+     title="Entry", style=shape.triangleup,   location=location.belowbar,
+     color=color.green, size=size.small)
+plotshape(strategy.position_size == 0 and strategy.position_size[1] > 0,
+     title="Exit",  style=shape.triangledown, location=location.abovebar,
+     color=color.red, size=size.small)
+
+// Optional: show raw crossover dots
+plotshape(cross_up, "Cross Up", shape.circle, location.belowbar,
+     color=color.new(color.blue, 70), size=size.tiny)

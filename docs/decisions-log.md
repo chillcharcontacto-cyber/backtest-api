@@ -4,6 +4,19 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-05-12
+
+**EMS System built as Pine Script first, Python port second**
+`ems_system_m30.pine` written and committed before any Python. Consistent with the pine-first methodology decided 2026-05-10. Python engine will be validated against TradingView backtest output for parity.
+
+**EMS Python engine is a separate project from the MCT engine**
+EMS is a standalone trend-following system (EMA crossover + H1 filter + structural SL). It shares no code or data structures with the MCT sequential protocol. Will live in its own files, not inside `engine.py`.
+
+**EMS SL algorithm: "valid bearish" requires HH confirmation in both wick and body**
+Structural SL looks back from crossover for a bearish candle where at least one subsequent candle (up to and including crossover bar) has `high > bearish.high` AND `close > bearish.open`. SL = lowest low from that candle to crossover inclusive. lb=1 case (bearish immediately before crossover) is valid if crossover bar itself satisfies the HH condition -- confirmed intentional per spec, needs user sign-off in Q6.
+
+---
+
 ## 2026-05-10
 
 **OL validity check — skip sweep if price already past the target**
