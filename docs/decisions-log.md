@@ -4,6 +4,16 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-05-14
+
+**Bitstamp API paginates backwards, not forwards**
+Bitstamp OHLC endpoint ignores `start` param and returns 1000 bars ending at `end`. Forward pagination (advance `start`) fails -- always returns same newest 1000 bars. Fix: walk `end` backwards (set `end = first_bar_timestamp - 1`) until full date range is covered. Sort ascending after accumulation.
+
+**CLI extended with `--exchange` flag instead of separate script**
+Added `--exchange binance|bitstamp` to existing `cli.py` rather than a separate entry point. Dispatch to `fetch_ohlcv` or `fetch_ohlcv_bitstamp` based on flag. Keeps one command surface, auto-sets default symbol per exchange.
+
+---
+
 ## 2026-05-13
 
 **EMS engine: all pure functions, no mutable class state**
