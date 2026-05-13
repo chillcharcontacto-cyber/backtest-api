@@ -8,24 +8,31 @@ def find_sl(
     highs:         np.ndarray,
     lows:          np.ndarray,
     crossover_idx: int,
-    lookback:      int = 50,
+    lookback:      Optional[int] = None,
 ) -> Optional[float]:
     """
-    Port of Pine Script findSL() — called at crossover_idx (the crossover bar).
+    Find structural stop loss for a long entry.
 
-    Algorithm (mirrors Pine bar-offset logic):
-      For lb = 1 .. lookback:
-        b_idx = crossover_idx - lb              (bearish candidate)
-        if b_idx < 0: stop
-        if close[b_idx] < open[b_idx]:          (bearish candle)
-          check indices b_idx+1 .. crossover_idx (subsequent candles)
-          valid if ANY has: high > bearish.high AND close > bearish.open
-          if valid: SL = min(lows[b_idx : crossover_idx+1])
-                    return SL immediately (most recent valid bearish wins)
+    Called at crossover_idx (the crossover bar, i.e. i-1 from entry bar).
 
-    Returns None if no valid bearish candle found within lookback.
+    Algorithm:
+      Walk back from j = crossover_idx - 1 toward max(0, crossover_idx - max_lb).
+      For each BEARISH candidate (close[j] < open[j]):
+        Require at least one k in (j, crossover_idx] satisfying BOTH on the SAME k:
+          highs[k] > highs[j]   (higher high in wick)
+          closes[k] > opens[j]  (higher high in body / close above anchor open)
+        CRITICAL: both conditions must be met by the SAME k (not different k's).
+      First qualifying j is the anchor.
+      SL = min(lows[j : crossover_idx + 1])
+
+    Parameters:
+      lookback: max bars to walk back. None = unlimited (walk to bar 0).
+
+    Returns None if no qualifying anchor found.
     """
-    for lb in range(1, lookback + 1):
+    max_lb = crossover_idx if lookback is None else min(lookback, crossover_idx)
+
+    for lb in range(1, max_lb + 1):
         b_idx = crossover_idx - lb
         if b_idx < 0:
             break
@@ -33,20 +40,18 @@ def find_sl(
         b_open  = opens[b_idx]
         b_close = closes[b_idx]
         b_high  = highs[b_idx]
-        b_low   = lows[b_idx]
 
         if b_close >= b_open:
-            continue  # not bearish
+            continue  # not bearish (strict)
 
-        # Check every candle from b_idx+1 to crossover_idx inclusive
+        # Both conditions must be met by the SAME k
         valid = False
-        for check_idx in range(b_idx + 1, crossover_idx + 1):
-            if highs[check_idx] > b_high and closes[check_idx] > b_open:
+        for k in range(b_idx + 1, crossover_idx + 1):
+            if highs[k] > b_high and closes[k] > b_open:
                 valid = True
                 break
 
         if valid:
-            sl = float(lows[b_idx : crossover_idx + 1].min())
-            return sl
+            return float(lows[b_idx : crossover_idx + 1].min())
 
     return None
