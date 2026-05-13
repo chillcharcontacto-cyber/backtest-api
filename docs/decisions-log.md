@@ -4,6 +4,22 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-05-13
+
+**EMS V2: adopted Samuel's canonical rules as the authoritative spec**
+Six engine changes to align with `RULES_EMS_AND_H4.md`: 500-bar warmup, unlimited SL lookback, H1 exit fires only at `:30` M30 bars (second half of H1 window), gap-down SL always fills at `sl_price` with `r_multiple=-1.00`, exit reason labels changed to `STRUCTURAL_SL`/`H1_EMA100`, NaN guards added. Samuel's rules are now the ground truth; any future engine logic questions defer to that doc.
+
+**EMS V3: H4 EMA20/50 confluence filter added as opt-in flag**
+H4 filter enabled via `--h4-filter` CLI flag, `cfg.h4_filter=True`. H4 built from H1 resample (not fetched separately — avoids extra API calls and stays consistent with H1 data). Lookup formula `(entry_ts - 4h).floor('4h')` confirmed against Samuel's worked examples. Results show PF improves from 2.20→2.48 (Binance) and 2.63→2.94 (Bitstamp) at cost of ~51% fewer trades. V3 ships as an opt-in, not the default.
+
+**Output schema: Samuel's 11-column Quantprove format**
+Replaced 4-column R-only CSV with 11-column schema: `trade_id, strategy, date, time, pair, direction, result, rr, duration, sl_size, exit_reason`. This matches Samuel's journal format for direct import/comparison. Price columns (entry_price, sl_price, exit_price) intentionally excluded from CSV — R-multiple is the only metric that matters for journal review.
+
+**SL lookback cap of 20 bars is equivalent to unlimited on this dataset**
+Tested LB20 vs LB∞ in-memory — results identical (976/978 trades, same PF). Every crossover in 2017–2026 BTC data finds its structural SL anchor within 20 bars. Decision: keep `lookback=None` (unlimited) as the engine default. The 20-bar cap adds no filtering value and might incorrectly block valid setups on other assets or timeframes.
+
+---
+
 ## 2026-05-14
 
 **Bitstamp API paginates backwards, not forwards**
