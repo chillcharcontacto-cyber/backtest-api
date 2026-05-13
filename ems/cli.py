@@ -1,37 +1,54 @@
 import argparse
 
 from .config import Config
-from .data import fetch_ohlcv
+from .data import fetch_ohlcv, fetch_ohlcv_bitstamp
 from .indicators import add_emas, add_h1_emas, mark_crossovers
 from .engine import simulate
 from .output import trades_to_csv
 
+# Default symbols per exchange
+EXCHANGE_DEFAULTS = {
+    "binance":  "BTCUSDT",
+    "bitstamp": "btcusd",
+}
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="EMS System BTCUSDT M30 Backtest")
-    parser.add_argument("--start",    default="2017-08-17", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end",      default="2026-05-12", help="End date (YYYY-MM-DD)")
-    parser.add_argument("--output",   default="trades.csv", help="Output CSV path")
-    parser.add_argument("--data-dir", default="data",       help="Parquet cache directory")
-    parser.add_argument("--symbol",   default="BTCUSDT",    help="Binance symbol")
+    parser = argparse.ArgumentParser(description="EMS System BTC M30 Backtest")
+    parser.add_argument("--start",    default="2017-08-17",  help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end",      default="2026-05-12",  help="End date (YYYY-MM-DD)")
+    parser.add_argument("--output",   default="trades.csv",  help="Output CSV path")
+    parser.add_argument("--data-dir", default="data",        help="Parquet cache directory")
+    parser.add_argument("--exchange", default="binance",
+                        choices=["binance", "bitstamp"],     help="Data source exchange")
+    parser.add_argument("--symbol",   default=None,
+                        help="Override symbol (default: BTCUSDT for binance, btcusd for bitstamp)")
     args = parser.parse_args()
 
+    exchange = args.exchange
+    symbol   = args.symbol or EXCHANGE_DEFAULTS[exchange]
+
     cfg = Config(
-        symbol    = args.symbol,
-        start     = args.start,
-        end       = args.end,
+        symbol     = symbol,
+        start      = args.start,
+        end        = args.end,
         output_csv = args.output,
-        data_dir  = args.data_dir,
+        data_dir   = args.data_dir,
     )
 
-    print(f"\n=== EMS Backtest: {cfg.symbol} M30  {cfg.start} -> {cfg.end} ===\n")
+    print(f"\n=== EMS Backtest: {symbol} M30  {cfg.start} -> {cfg.end}  [{exchange}] ===\n")
 
     # --- fetch data ---
+    def _fetch(interval: str) -> object:
+        if exchange == "bitstamp":
+            return fetch_ohlcv_bitstamp(symbol, interval, cfg.start, cfg.end, cfg.data_dir)
+        return fetch_ohlcv(symbol, interval, cfg.start, cfg.end, cfg.data_dir)
+
     print("[1/4] Fetching M30 data ...")
-    m30_raw = fetch_ohlcv(cfg.symbol, "30m", cfg.start, cfg.end, cfg.data_dir)
+    m30_raw = _fetch("30m")
 
     print("[2/4] Fetching H1 data ...")
-    h1_raw  = fetch_ohlcv(cfg.symbol, "1h",  cfg.start, cfg.end, cfg.data_dir)
+    h1_raw  = _fetch("1h")
 
     print(f"\nM30 bars : {len(m30_raw):,}")
     print(f"H1 bars  : {len(h1_raw):,}\n")
