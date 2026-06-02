@@ -1,0 +1,232 @@
+"""
+Single-bar decision predicates shared by the live runner AND the backtest.
+
+This module is the ONE source of truth for EMS V2 entry/exit rules. The live
+runner (ems_live.runner) and the offline driver replay() below both compose the
+exact same predicates, so live behavior cannot drift from the backtested engine.
+
+replay() reproduces ems.engine.simulate() trade-for-trade on identical data.
+tests/test_live_parity.py asserts that equality.
+
+Long-only (EMS V2 is long-only). No H4 filter here (that is V3).
+"""
+from dataclasses import dataclass
+from typing import List, Optional
+
+import numpy as np
+import pandas as pd
+
+from ems.engine import Trade
+from ems.sl_finder import find_sl_with_anchor
+
+
+# --------------------------------------------------------------------------- #
+#  Context: precomputed arrays for fast bar-by-bar evaluation                  #
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class Ctx:
+    """Precomputed numpy views over the M30 + H1 indicator frames."""
+    m30_opens:  np.ndarray
+    m30_highs:  np.ndarray
+    m30_lows:   np.ndarray
+    m30_closes: np.ndarray
+    m30_cross:  np.ndarray
+    m30_times:  pd.DatetimeIndex
+
+    h1_closes:     np.ndarray
+    h1_ema_trend:  np.ndarray
+    h1_ema_exit:   np.ndarray
+    h1_time_idx:   dict       # Timestamp -> row index
+
+    one_hour:   pd.Timedelta
+    thirty_min: pd.Timedelta
+
+
+def build_ctx(m30: pd.DataFrame, h1: pd.DataFrame) -> Ctx:
+    """
+    Build a Ctx from indicator-ready frames.
+
+    m30 must have: open, high, low, close, ema_fast, ema_slow, cross_up
+    h1  must have: close, h1_ema_trend, h1_ema_exit
+    """
+    return Ctx(
+        m30_opens  = m30["open"].to_numpy(dtype=float),
+        m30_highs  = m30["high"].to_numpy(dtype=float),
+        m30_lows   = m30["low"].to_numpy(dtype=float),
+        m30_closes = m30["close"].to_numpy(dtype=float),
+        m30_cross  = m30["cross_up"].to_numpy(dtype=bool),
+        m30_times  = m30.index,
+        h1_closes    = h1["close"].to_numpy(dtype=float),
+        h1_ema_trend = h1["h1_ema_trend"].to_numpy(dtype=float),
+        h1_ema_exit  = h1["h1_ema_exit"].to_numpy(dtype=float),
+        h1_time_idx  = {t: i for i, t in enumerate(h1.index)},
+        one_hour   = pd.Timedelta(hours=1),
+        thirty_min = pd.Timedelta(minutes=30),
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  Decisions                                                                   #
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class EntrySignal:
+    entry_price:   float    # M30 bar open (Binance) — live entry is a market order here
+    sl_price:      float    # structural SL price on Binance (adapt to HL before placing)
+    anchor_idx:    int      # M30 index of the SL anchor bar
+    crossover_idx: int      # M30 index of the crossover bar (entry_bar - 1)
+    anchor_time:   pd.Timestamp
+    crossover_time: pd.Timestamp
+
+
+@dataclass(frozen=True)
+class ExitSignal:
+    exit_price: float
+    exit_time:  pd.Timestamp
+    reason:     str         # "STRUCTURAL_SL" | "H1_EMA100"
+    r_multiple: float
+
+
+# --------------------------------------------------------------------------- #
+#  Predicates (single bar i = the bar currently being evaluated)               #
+# --------------------------------------------------------------------------- #
+
+def check_sl_hit(ctx: Ctx, i: int, trade_sl: float) -> bool:
+    """Rule 7: intrabar stop hit when the bar low pierces the stop."""
+    return ctx.m30_lows[i] <= trade_sl
+
+
+def check_h1_exit(ctx: Ctx, i: int, entry_price: float, trade_sl: float
+                  ) -> Optional[ExitSignal]:
+    """
+    Rule 8: H1 EMA100 exit. Fires only at :30 M30 bars (concurrent H1 just closed).
+    exit_price = that H1 close; exit_time = h1_open + 1h.
+    """
+    t = ctx.m30_times[i]
+    if t.minute != 30:
+        return None
+    h1_exit_open = t - ctx.thirty_min           # = t.floor('h')
+    idx = ctx.h1_time_idx.get(h1_exit_open)
+    if idx is None:
+        return None
+    h1_c = ctx.h1_closes[idx]
+    h1_e = ctx.h1_ema_exit[idx]
+    if np.isnan(h1_c) or np.isnan(h1_e) or h1_c >= h1_e:
+        return None
+    exit_price = h1_c
+    exit_time  = h1_exit_open + ctx.one_hour
+    r = (exit_price - entry_price) / (entry_price - trade_sl)
+    return ExitSignal(round(exit_price, 8), exit_time, "H1_EMA100", round(r, 4))
+
+
+def check_entry(ctx: Ctx, i: int, cfg) -> Optional[EntrySignal]:
+    """
+    Entry pipeline for bar i (crossover at i-1, entry at open[i]):
+      Rule 1 : warmup gate (i > warmup_bars)
+      Rule 2 : crossover confirmed on bar i-1
+      Rule 3 : H1 trend filter (last closed H1 close > H1 EMA50)
+      Rule 5/6: structural SL via unlimited lookback
+      Rule 4 : min risk distance
+    Returns EntrySignal or None.
+    """
+    warmup = getattr(cfg, "warmup_bars", 0)
+    if i <= warmup:
+        return None
+
+    if not ctx.m30_cross[i - 1]:
+        return None
+
+    t = ctx.m30_times[i]
+
+    # H1 trend filter — last CLOSED H1 bar before entry
+    h1_lookup = t.floor("h") - ctx.one_hour
+    h1_idx = ctx.h1_time_idx.get(h1_lookup)
+    if h1_idx is None:
+        return None
+    h1_c = ctx.h1_closes[h1_idx]
+    h1_trend = ctx.h1_ema_trend[h1_idx]
+    if np.isnan(h1_c) or np.isnan(h1_trend) or h1_c <= h1_trend:
+        return None
+
+    # Structural SL (unlimited lookback) + anchor index for HL adaptation
+    res = find_sl_with_anchor(
+        opens=ctx.m30_opens, closes=ctx.m30_closes,
+        highs=ctx.m30_highs, lows=ctx.m30_lows,
+        crossover_idx=i - 1, lookback=None,
+    )
+    if res is None:
+        return None
+    sl, anchor_idx = res
+
+    ep = ctx.m30_opens[i]
+    if ep <= sl:
+        return None
+
+    min_risk_factor = cfg.min_risk_pct / 100.0
+    if (ep - sl) / ep < min_risk_factor:
+        return None
+
+    return EntrySignal(
+        entry_price    = ep,
+        sl_price       = sl,
+        anchor_idx     = anchor_idx,
+        crossover_idx  = i - 1,
+        anchor_time    = ctx.m30_times[anchor_idx],
+        crossover_time = ctx.m30_times[i - 1],
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  replay() — offline driver, parity target vs ems.engine.simulate()          #
+# --------------------------------------------------------------------------- #
+
+def replay(m30: pd.DataFrame, h1: pd.DataFrame, cfg) -> List[Trade]:
+    """
+    Drive the predicates bar-by-bar to produce a trade list.
+
+    Must equal ems.engine.simulate(m30, h1, cfg) exactly (no H4). This proves the
+    live predicates encode the same rules as the validated backtest engine.
+    """
+    ctx = build_ctx(m30, h1)
+
+    trades: List[Trade] = []
+    in_position = False
+    trade_sl = 0.0
+    entry_price = 0.0
+    entry_time: Optional[pd.Timestamp] = None
+
+    for i in range(1, len(m30)):
+        t = ctx.m30_times[i]
+
+        if in_position:
+            # SL first (intrabar)
+            if check_sl_hit(ctx, i, trade_sl):
+                trades.append(Trade(
+                    entry_time=entry_time, exit_time=t,
+                    entry_price=entry_price, sl_price=trade_sl,
+                    exit_price=trade_sl, exit_reason="STRUCTURAL_SL",
+                    r_multiple=-1.00, strategy=cfg.strategy_name,
+                ))
+                in_position = False
+                continue
+
+            ex = check_h1_exit(ctx, i, entry_price, trade_sl)
+            if ex is not None:
+                trades.append(Trade(
+                    entry_time=entry_time, exit_time=ex.exit_time,
+                    entry_price=entry_price, sl_price=trade_sl,
+                    exit_price=ex.exit_price, exit_reason=ex.reason,
+                    r_multiple=ex.r_multiple, strategy=cfg.strategy_name,
+                ))
+                in_position = False
+                continue
+        else:
+            sig = check_entry(ctx, i, cfg)
+            if sig is not None:
+                in_position = True
+                trade_sl = sig.sl_price
+                entry_price = sig.entry_price
+                entry_time = t
+
+    return trades

@@ -6,3 +6,4 @@ yfinance
 requests
 pyarrow
 pytest
+hyperliquid-python-sdk

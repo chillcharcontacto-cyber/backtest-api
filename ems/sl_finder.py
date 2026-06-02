@@ -1,17 +1,18 @@
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 
 
-def find_sl(
+def find_sl_with_anchor(
     opens:         np.ndarray,
     closes:        np.ndarray,
     highs:         np.ndarray,
     lows:          np.ndarray,
     crossover_idx: int,
     lookback:      Optional[int] = None,
-) -> Optional[float]:
+) -> Optional[Tuple[float, int]]:
     """
-    Find structural stop loss for a long entry.
+    Find structural stop loss for a long entry, returning BOTH the SL price and
+    the anchor bar index.
 
     Called at crossover_idx (the crossover bar, i.e. i-1 from entry bar).
 
@@ -28,7 +29,11 @@ def find_sl(
     Parameters:
       lookback: max bars to walk back. None = unlimited (walk to bar 0).
 
-    Returns None if no qualifying anchor found.
+    Returns (sl_price, anchor_idx) or None if no qualifying anchor found.
+
+    The anchor_idx is needed by the live bot to map the SL timestamp range
+    (anchor_idx .. crossover_idx) onto Hyperliquid candles for venue-correct
+    stop placement.
     """
     max_lb = crossover_idx if lookback is None else min(lookback, crossover_idx)
 
@@ -52,6 +57,26 @@ def find_sl(
                 break
 
         if valid:
-            return float(lows[b_idx : crossover_idx + 1].min())
+            sl = float(lows[b_idx : crossover_idx + 1].min())
+            return sl, b_idx
 
     return None
+
+
+def find_sl(
+    opens:         np.ndarray,
+    closes:        np.ndarray,
+    highs:         np.ndarray,
+    lows:          np.ndarray,
+    crossover_idx: int,
+    lookback:      Optional[int] = None,
+) -> Optional[float]:
+    """
+    Structural stop loss price for a long entry. Thin wrapper over
+    find_sl_with_anchor() that returns only the price (backward-compatible).
+    """
+    result = find_sl_with_anchor(
+        opens=opens, closes=closes, highs=highs, lows=lows,
+        crossover_idx=crossover_idx, lookback=lookback,
+    )
+    return None if result is None else result[0]

@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Data caches (re-fetchable parquet)
+data/
+
+# Worktrees
+.claude/worktrees/
+
+# Secrets — never commit Hyperliquid keys
+.env
+*.key
+ems_live_secrets.json
+ems_live_state.json
