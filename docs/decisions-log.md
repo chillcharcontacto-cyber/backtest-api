@@ -4,6 +4,50 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-02
+
+**EMS V2 chosen as the live-trading strategy (not V3)**
+Live Hyperliquid bot is built on EMS V2, long-only. V3's H4 filter stays a backtest
+option only for now. Keeps the first live system simpler.
+
+**Live bot venue + execution: Hyperliquid BTC perp, testnet first**
+Trade BTC perp on Hyperliquid. Always start on testnet, flip to mainnet via a single
+config flag only after a clean testnet lifecycle + a mainnet dry-run. Render worker
+for 24/7 hosting (matches existing API platform).
+
+**Hybrid data model: Binance signals, Hyperliquid-adapted SL**
+Entry, H1 trend filter, and H1 EMA100 exit are computed on Binance candles (what V2
+was backtested on). The structural SL is identified on Binance (anchor bar), but the
+stop PRICE is read from Hyperliquid candles over the same anchor→crossover timestamp
+range. Reason: the bot executes on Hyperliquid, whose lows differ from Binance by a
+small basis (measured ~+38 USD on mainnet); placing the stop at the Binance low would
+be the wrong price on the venue actually traded.
+
+**Sizing: fixed $ risk per trade (hot-adjustable)**
+`size = risk_usd / (entry − sl)`. Flat dollar risk per trade, changeable anytime via
+config. Chosen over %-equity for simplicity in the first live version.
+
+**One source of truth for entry/exit rules (decider.py + parity test)**
+Live predicates and the backtest must never drift. `ems_live.decider.replay()`
+reproduces `ems.engine.simulate()` trade-for-trade; `tests/test_live_parity.py`
+enforces it (synthetic seeds + a real 171-trade Binance slice, byte-identical). Any
+future rule change must keep this test green.
+
+**Safety architecture for live orders (to build before mainnet)**
+API/agent wallet cannot withdraw funds (protocol-level) — worst-case bug caps loss at
+the HL account balance, never the external wallet. On top of that: hard guards
+(`assert sl < entry`, sane risk band, absolute `max_notional` ceiling, leverage cap +
+isolated margin, stop-confirmed-or-flatten, one-position-only, max-daily-loss kill
+switch) and a mainnet dry-run (orders logged, not sent) before any real-size trading.
+
+**Testnet faucet is gated behind a mainnet deposit**
+Hyperliquid's testnet faucet only pays addresses with prior mainnet deposit history
+(anti-bot). To validate on testnet we must first make a small (~5–10 USDC) real
+mainnet deposit on the same address, which is recoverable. Accepted this cost to keep
+the testnet-first safety path.
+
+---
+
 ## 2026-05-13
 
 **EMS V2: adopted Samuel's canonical rules as the authoritative spec**

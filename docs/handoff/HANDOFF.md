@@ -2,57 +2,78 @@
 
 ## Last Session Summary
 
-**EMS V2 + V3 implemented, all 4 backtests run and committed**
+**EMS V2 → live Hyperliquid bot: Phase 0+1 foundation shipped (read-only, no orders)**
 
-V2 aligned engine to Samuel's canonical `RULES_EMS_AND_H4.md` — 6 rule fixes:
-1. `warmup_bars=500` — no entries before bar 500 (EMA seeding protection)
-2. SL lookback: unlimited (`find_sl` called with `lookback=None`)
-3. H1 exit: fires only at `:30` M30 bars; exit_price = H1 close; exit_time = h1_open + 1h
-4. Gap-down SL: always fill at `sl_price`, `r_multiple` forced to `-1.00`
-5. exit_reason labels: `STRUCTURAL_SL` | `H1_EMA100` (was `SL` | `H1_EMA100`)
-6. NaN guards on all EMA comparisons
+New `ems_live/` package scaffolds the live bot built on EMS V2. Order placement is
+hard-stubbed (`NotImplementedError`) — no code path can trade until Phase 3.
 
-V3 adds H4 EMA20/50 confluence filter via `--h4-filter` CLI flag.
-- H4 built by resampling H1 → `resample('4h', closed='left', label='left')`
-- Lookup: `(entry_ts - 4h).floor('4h')` = last fully closed H4 bar
-- `strategy_name = "EMA-Cross-H4F"` when active
+| File | Role |
+|---|---|
+| `config.py` | `LiveConfig` — fixed-$ risk/trade (hot-adjustable), testnet flag, fetch windows |
+| `feed.py` | recent-candle fetch: Binance (signals) + Hyperliquid (SL); drops forming bar |
+| `sl_adapter.py` | Binance anchor→crossover range → Hyperliquid low = venue-correct stop |
+| `decider.py` | single-bar predicates + `replay()` driver — ONE source of truth, live = backtest |
+| `broker.py` | Hyperliquid wrapper; read-only methods wired, orders stubbed |
+| `recon.py` | runnable read-only proof: `python -m ems_live.recon` |
 
-Output schema updated to Samuel's 11-column Quantprove format:
-`trade_id, strategy, date, time, pair, direction, result, rr, duration, sl_size, exit_reason`
+**Hybrid data design (user decision):** entry/exit signals from Binance candles;
+SL price adapted to Hyperliquid candles over the same anchor timestamp range.
 
-**Results (2017-08-17 → 2026-05-12):**
+**Parity guarantee** (`tests/test_live_parity.py`):
+- `replay() == simulate()` on 8 synthetic seeds (logic equality)
+- `replay() == simulate()` on real cached Binance slice: **171 trades, byte-identical**
 
-| Version | Exchange | Trades | WR | Avg R | Total R | PF |
-|---|---|---|---|---|---|---|
-| V2 | Binance | 976 | 27.2% | 0.584 | 569.53 | 2.20 |
-| V2 | Bitstamp | 978 | 28.0% | 0.780 | 762.87 | 2.63 |
-| V3 | Binance | 480 | 22.1% | 0.958 | 459.69 | 2.48 |
-| V3 | Bitstamp | 475 | 23.2% | 1.254 | 595.45 | 2.94 |
+**Live recon proven (read-only):**
+- Binance + HL candle fetch, timestamps align
+- Entry predicates evaluate on live bars
+- SL adaptation: Binance SL 73565.73 → **HL mainnet 73528.00, basis +37.73** (tight, correct)
+- Testnet HL data thin → big basis there; mainnet basis ~15–45 USD as expected
 
-V3 cuts trade count ~51% but PF and Avg R improve significantly on both exchanges.
+**Minimal non-breaking refactor:** `sl_finder.py` gains `find_sl_with_anchor()`
+(returns SL price + anchor idx); `find_sl()` delegates — identical behavior.
 
-**LB20 experiment (in-memory, no CSV):**
-Tested SL lookback capped at 20 bars vs unlimited. Results identical — every qualifying crossover finds its structural SL anchor within 20 bars on this dataset.
-
-Tests: 26/26 green. All committed and pushed (`1ad1881`).
+Tests: **35 green** (26 prior + 9 parity). `hyperliquid-python-sdk` added.
+`.gitignore` created; committed `__pycache__` untracked.
+Committed + pushed (`7efa190`).
 
 ---
 
 ## Currently Working On
 
-Nothing — session complete.
+**Funding the Hyperliquid testnet account (blocked on user action).**
+
+- Sizing decision: **fixed $ risk per trade**, hot-adjustable
+- Venue: **testnet first**, then mainnet
+- Hosting: **Render worker** (chosen, not yet set up)
+- User testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`
+  (verified read-only: mainnet value 0, testnet value 0, flat)
+
+**Blocker:** testnet faucet (app.hyperliquid-testnet.xyz/drip) is anti-bot gated —
+requires a prior **mainnet deposit on the same address**. User's address has no
+mainnet history, so faucet rejects it. User is moving ~10 USDC + ~$2 ETH gas from
+KuCoin → Arbitrum One → their wallet → deposit on app.hyperliquid.xyz to unlock the
+faucet, then claim 1000 mock USDC, then generate the API agent key.
 
 ---
 
 ## Parked / Unfinished
 
-**EMS engine:**
-- **Parity check**: compare Python V2 results against TradingView Pine strategy report (same date range)
-- **`.gitignore` fix**: add `data/`, `__pycache__/`, `*.pyc`, `trades*.csv` — pycache and data dir getting committed
-- **Short-side extension**: Samuel may have short rules — not yet discussed or implemented
+**EMS live bot (next phases):**
+- Phase 2: `position.py` (state + persistence + boot reconcile vs exchange),
+  `runner.py` (bar-close scheduler), missed-bar catch-up on restart
+- Phase 3: implement `market_entry` / `place_stop` / `market_close` on **testnet**;
+  full entry→SL→exit lifecycle with fake money
+- Safety guards to build before any mainnet order: `assert sl < entry`, sane
+  risk-band check, absolute `max_notional` ceiling, leverage cap + isolated margin,
+  stop-confirmed-or-flatten, one-position-only, max-daily-loss kill switch, dry-run mode
+- Phase 4: mainnet dry-run (orders logged, not sent) → Phase 5: live tiny size
 
-**MCT engine (carried from previous sessions):**
-- No-divergence test result still outstanding
+**EMS engine (pre-existing):**
+- Parity check vs TradingView Pine strategy report
+- Short-side extension — Samuel may have short rules, not discussed
+
+**MCT engine (carried):**
+- No-divergence test result outstanding
 - `max_sweep_age_bars` not implemented
 - `div_found` counter cosmetic bug
 - RSI divergence 4-model logic unaudited
@@ -61,7 +82,8 @@ Nothing — session complete.
 
 ## Next Steps
 
-1. **EMS parity check** — open Pine strategy on TradingView with V2 settings, compare trade count + total R vs Python output
-2. **Fix `.gitignore`** — data dir and pycache getting committed unnecessarily
-3. **MCT no-divergence test** — get result, diagnose
-4. **MCT `max_sweep_age_bars`** — implement + expose via `bos` indicator params
+1. **User funds testnet** — KuCoin → Arbitrum → wallet → HL mainnet deposit →
+   claim faucet → generate API agent key → hand over testnet address + private key
+2. **Verify funding** — point `recon.py` at the address, confirm testnet balance + flat
+3. **Phase 2** — build `position.py` + `runner.py` (scheduler, reconcile, catch-up)
+4. **Phase 3** — implement order methods on testnet, run full lifecycle with safety guards
