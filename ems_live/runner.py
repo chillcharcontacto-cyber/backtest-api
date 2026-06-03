@@ -112,6 +112,11 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
             log("  DRY_RUN: would market_close + cancel resting stop")
         else:
             broker.market_close()
+            if state.stop_oid and state.stop_oid > 0:
+                try:
+                    broker.cancel_order(state.stop_oid)
+                except Exception as e:
+                    log(f"  (stop cancel after close failed, likely already gone: {e!r})")
         return store_flat(store)
 
     # ---------------- FLAT: check entry ----------------
@@ -147,16 +152,31 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         log("  DRY_RUN: would market_entry(size) then place_stop(hl_sl, size)")
         return state
 
-    # --- LIVE (Phase 3) ---
-    broker.market_entry(size)
-    stop_oid = broker.place_stop(sl_hl, size)
+    # --- LIVE ---
+    fill = broker.market_entry(size)
+    actual_entry = fill["avg_px"]
+    log(f"  FILLED entry @ {actual_entry:.2f} sz={fill['filled']}")
+
+    # stop-confirmed-or-flatten: a fill without a working stop is the worst state
+    try:
+        stop_oid = broker.place_stop(sl_hl, size)
+    except Exception as e:
+        log(f"  STOP PLACEMENT FAILED ({e!r}) — FLATTENING immediately")
+        broker.market_close()
+        return store_flat(store)
+
+    if stop_oid == -1:
+        log("  stop triggered on placement (price already through SL) — position closed")
+        return store_flat(store)
+
     new = PositionState(
         status=IN_POSITION,
-        entry_time=str(t), entry_price=entry, sl_price=sl_hl, size=size,
+        entry_time=str(t), entry_price=actual_entry, sl_price=sl_hl, size=size,
         anchor_time=str(sig.anchor_time), crossover_time=str(sig.crossover_time),
         stop_oid=stop_oid,
     )
     store.save(new)
+    log(f"  POSITION OPEN  entry={actual_entry:.2f} stop={sl_hl:.2f} oid={stop_oid}")
     return new
 
 
@@ -171,6 +191,15 @@ def store_flat(store: PositionStore) -> PositionState:
 # --------------------------------------------------------------------------- #
 
 def boot_reconcile(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionState:
+    # set leverage + isolated margin once (live only)
+    if broker is not None and not cfg.dry_run:
+        try:
+            broker.set_margin_mode()
+            log(f"[boot] margin mode set: {cfg.leverage}x "
+                f"{'isolated' if cfg.isolated_margin else 'cross'}")
+        except Exception as e:
+            log(f"[boot] set_margin_mode failed: {e!r}")
+
     local = store.load()
     exch = broker.open_position() if broker else None
     new, events = reconcile(local, exch)
