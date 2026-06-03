@@ -27,6 +27,16 @@ class LiveConfig:
     # --- sizing / risk ---
     risk_usd:       float = 20.0         # fixed $ risk per trade (change anytime)
 
+    # --- safety guards (orders refused if violated) ---
+    max_notional_usd:   float = 500.0    # absolute ceiling on position notional
+    max_risk_band_pct:  float = 15.0     # reject if stop distance > this % of entry
+    leverage:           int   = 3        # leverage cap on the coin
+    isolated_margin:    bool  = True     # isolated so one trade can't bleed the account
+    dry_run:            bool  = True     # compute+log orders, DO NOT send (flip in Phase 3)
+
+    # --- scheduler ---
+    poll_buffer_sec:    int   = 15       # wait this long after bar close before fetching
+
     # --- venue ---
     testnet:        bool  = True         # ALWAYS start true; flip only when proven
 
