@@ -4,6 +4,46 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-04
+
+**Exchange is the source of truth; local state reconciles on every boot**
+The bot keeps a local JSON `PositionState`, but on each start it reconciles against
+the live exchange position via a 4-case matrix (flat/flat, inpos/inpos resume,
+inpos/exch-flat = closed-while-down, flat/exch-pos = unexpected). The exchange wins;
+local state only supplies the SL/signal context the exchange does not store. Prevents
+the bot acting on a stale view after a crash or a stop that fired while it was down.
+
+**Stop is a reduce-only trigger resting on the exchange, not bot-monitored**
+The structural stop is placed as a reduce-only stop-market order on Hyperliquid at
+entry time. It survives bot downtime — protection does not depend on the process
+being alive. The H1 EMA100 exit, by contrast, is computed and so does require the bot
+to be running at `:30` bars (catch-up on restart is a parked refinement).
+
+**Stop-confirmed-or-flatten invariant**
+A fill without a working stop is the worst state. If `place_stop()` throws after a
+market entry fills, the runner immediately `market_close()`s. The bot never holds an
+unprotected position by design.
+
+**Hyperliquid price rounding: 5 significant figures (caught live on testnet)**
+HL perp prices must have ≤5 significant figures AND ≤(6−szDecimals) decimals. First
+testnet stop used 6 sig figs (63522.9) and was rejected "Invalid TP/SL price". Fixed
+`round_px()` to the sig-fig rule (BTC ~65k → integer prices). Validates the decision
+to debug on testnet before risking real money.
+
+**Unified Account: tradable equity = perp + spot collateral**
+The testnet account has Unified Account enabled, so spot USDC backs perp trades and
+the perp `marginSummary.accountValue` reads 0. No spot→perp transfer is needed (and
+the agent cannot do one anyway — fund moves are master-signed). `account_value()`
+sums perp + spot USDC to report true tradable equity.
+
+**Agent key is trade-only — confirmed empirically**
+On testnet the agent successfully set leverage (a trading action) but was rejected on
+`usd_class_transfer` (a fund move, keyed to the agent's own address). Confirms the
+safety claim: a leaked/buggy agent key can trade the account but cannot move or
+withdraw funds. Max loss from any bot bug is capped at the account balance.
+
+---
+
 ## 2026-06-02
 
 **EMS V2 chosen as the live-trading strategy (not V3)**

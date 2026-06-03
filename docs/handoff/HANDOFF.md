@@ -2,71 +2,73 @@
 
 ## Last Session Summary
 
-**EMS V2 → live Hyperliquid bot: Phase 0+1 foundation shipped (read-only, no orders)**
+**EMS live Hyperliquid bot: Phases 2 + 3 shipped — trades autonomously on TESTNET**
 
-New `ems_live/` package scaffolds the live bot built on EMS V2. Order placement is
-hard-stubbed (`NotImplementedError`) — no code path can trade until Phase 3.
+Built on top of last session's Phase 0+1 foundation. The bot can now run a full
+entry→stop→exit lifecycle with real testnet orders. `dry_run` defaults True, so
+autonomous trading is opt-in (flip to False to arm).
 
-| File | Role |
-|---|---|
-| `config.py` | `LiveConfig` — fixed-$ risk/trade (hot-adjustable), testnet flag, fetch windows |
-| `feed.py` | recent-candle fetch: Binance (signals) + Hyperliquid (SL); drops forming bar |
-| `sl_adapter.py` | Binance anchor→crossover range → Hyperliquid low = venue-correct stop |
-| `decider.py` | single-bar predicates + `replay()` driver — ONE source of truth, live = backtest |
-| `broker.py` | Hyperliquid wrapper; read-only methods wired, orders stubbed |
-| `recon.py` | runnable read-only proof: `python -m ems_live.recon` |
+**Phase 2 — state machine + scheduler** (`position.py`, `runner.py`):
+- `PositionState` + atomic JSON `PositionStore`
+- `reconcile()` vs exchange truth (4-case matrix): flat/flat=OK_FLAT;
+  inpos/inpos=OK_RESUME (keep local SL meta); inpos/exch-flat=CLOSED_WHILE_DOWN;
+  flat/exch-pos=UNEXPECTED_POSITION
+- `compute_size()` fixed-$ risk: `size = risk_usd / (entry - sl_hl)`
+- `guard_order()` safety gate: sl<entry, risk band [min_risk_pct, max_risk_band_pct],
+  absolute `max_notional` ceiling, positive size
+- `tick()`, `boot_reconcile()`, `seconds_until_next_bar()`, `run_forever()` loop
+- config gained: max_notional_usd, max_risk_band_pct, leverage, isolated_margin,
+  dry_run, poll_buffer_sec
 
-**Hybrid data design (user decision):** entry/exit signals from Binance candles;
-SL price adapted to Hyperliquid candles over the same anchor timestamp range.
+**Phase 3 — live order execution** (`broker.py`):
+- `market_entry()` (market_open long, returns avg fill px), `place_stop()`
+  (reduce-only stop-market trigger, returns resting oid), `market_close()`,
+  `cancel_order()`, `set_margin_mode()` (leverage + isolated)
+- `account_value()` sums perp + spot USDC (Unified Account: perp marginSummary
+  reads 0 while collateral sits in spot)
+- `round_px()` enforces HL perp rule: 5 significant figures AND ≤(6-szDecimals)
+  decimals → BTC ~65k uses integer prices
+- runner live path: capture actual avg_px; **stop-confirmed-or-flatten** (fill
+  without working stop → immediate market_close); cancel resting stop on H1 exit
 
-**Parity guarantee** (`tests/test_live_parity.py`):
-- `replay() == simulate()` on 8 synthetic seeds (logic equality)
-- `replay() == simulate()` on real cached Binance slice: **171 trades, byte-identical**
+**Testnet verification (real fake-money orders):**
+- direct broker lifecycle: entry filled, stop rested, close, flat ✅
+- forced runner tick: SL adaptation + sizing + guards + persistence + stop_oid →
+  position opened & protected → closed clean ✅
+- caught a real bug live: 6-sig-fig stop px rejected ("Invalid TP/SL price");
+  fixed `round_px`, dangling position closed safely, re-tested green
+- proved agent safety model: agent CAN trade (update_leverage ok) but CANNOT move
+  funds (usd_class_transfer rejected, keyed to agent) — exactly as designed
 
-**Live recon proven (read-only):**
-- Binance + HL candle fetch, timestamps align
-- Entry predicates evaluate on live bars
-- SL adaptation: Binance SL 73565.73 → **HL mainnet 73528.00, basis +37.73** (tight, correct)
-- Testnet HL data thin → big basis there; mainnet basis ~15–45 USD as expected
-
-**Minimal non-breaking refactor:** `sl_finder.py` gains `find_sl_with_anchor()`
-(returns SL price + anchor idx); `find_sl()` delegates — identical behavior.
-
-Tests: **35 green** (26 prior + 9 parity). `hyperliquid-python-sdk` added.
-`.gitignore` created; committed `__pycache__` untracked.
-Committed + pushed (`7efa190`).
+Tests: **48 green** (+13: reconcile matrix, store roundtrip, sizing, guards, scheduler).
+Commits pushed: Phase 2 `7759439`, Phase 3 `8e82fb8`.
 
 ---
 
 ## Currently Working On
 
-**Funding the Hyperliquid testnet account (blocked on user action).**
-
-- Sizing decision: **fixed $ risk per trade**, hot-adjustable
-- Venue: **testnet first**, then mainnet
-- Hosting: **Render worker** (chosen, not yet set up)
-- User testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`
-  (verified read-only: mainnet value 0, testnet value 0, flat)
-
-**Blocker:** testnet faucet (app.hyperliquid-testnet.xyz/drip) is anti-bot gated —
-requires a prior **mainnet deposit on the same address**. User's address has no
-mainnet history, so faucet rejects it. User is moving ~10 USDC + ~$2 ETH gas from
-KuCoin → Arbitrum One → their wallet → deposit on app.hyperliquid.xyz to unlock the
-faucet, then claim 1000 mock USDC, then generate the API agent key.
+Nothing mid-flight. Phase 3 complete and committed. Bot is armed-capable on testnet
+but left in `dry_run=True` (safe default). Account funded + configured:
+- Testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`
+- Testnet equity: **999 mock USDC** (Unified Account — usable for perps directly)
+- Agent (API) wallet `ems-bot` authorized, BTC leverage set 3x isolated
+- Credentials in gitignored `.env` (HL_MASTER_ADDRESS, HL_AGENT_KEY, HL_TESTNET=true)
+- Mainnet: 9.8 USDC sits in spot (the deposit that unlocked the faucet gate)
 
 ---
 
 ## Parked / Unfinished
 
-**EMS live bot (next phases):**
-- Phase 2: `position.py` (state + persistence + boot reconcile vs exchange),
-  `runner.py` (bar-close scheduler), missed-bar catch-up on restart
-- Phase 3: implement `market_entry` / `place_stop` / `market_close` on **testnet**;
-  full entry→SL→exit lifecycle with fake money
-- Safety guards to build before any mainnet order: `assert sl < entry`, sane
-  risk-band check, absolute `max_notional` ceiling, leverage cap + isolated margin,
-  stop-confirmed-or-flatten, one-position-only, max-daily-loss kill switch, dry-run mode
-- Phase 4: mainnet dry-run (orders logged, not sent) → Phase 5: live tiny size
+**EMS live bot — remaining phases:**
+- **Phase 4: unattended deploy.** Add entrypoint `python -m ems_live.run`
+  (load `.env` → `run_forever`); add a Render background worker to `render.yaml`
+  with HL_* env vars; soak-test on live testnet bars for days to catch a real
+  autonomous trade. Decide: local soak first vs straight to Render.
+- **Missed-bar catch-up on restart** — runner currently resumes at next bar; if the
+  worker is down across a `:30` H1-exit bar, that exit is skipped. Add catch-up.
+- **max-daily-loss kill switch** — designed, not yet implemented.
+- **Phase 5: mainnet.** Flip testnet=False, transfer real USDC spot→perp (master-
+  signed, in UI — agent can't), tiny `risk_usd`, mainnet dry-run first, then live.
 
 **EMS engine (pre-existing):**
 - Parity check vs TradingView Pine strategy report
@@ -80,10 +82,19 @@ faucet, then claim 1000 mock USDC, then generate the API agent key.
 
 ---
 
-## Next Steps
+## Next Steps (tomorrow — exact order)
 
-1. **User funds testnet** — KuCoin → Arbitrum → wallet → HL mainnet deposit →
-   claim faucet → generate API agent key → hand over testnet address + private key
-2. **Verify funding** — point `recon.py` at the address, confirm testnet balance + flat
-3. **Phase 2** — build `position.py` + `runner.py` (scheduler, reconcile, catch-up)
-4. **Phase 3** — implement order methods on testnet, run full lifecycle with safety guards
+1. **Build the entrypoint** — `ems_live/run.py`: load `.env`, construct LiveConfig +
+   PositionStore + LiveBroker, call `run_forever()`. Add a tiny `.env` loader
+   (no new dependency) or add `python-dotenv`.
+2. **Local soak test (testnet, dry_run=True first)** — run `python -m ems_live.run`
+   on your machine for ~1 hour, watch it tick each bar, confirm scheduler wakes on
+   :00/:30, fetches, evaluates, logs "no signal". Then flip `dry_run=False` and let
+   it run on testnet to (eventually) catch a real crossover and trade autonomously.
+3. **Deploy to Render worker** — add background worker service to `render.yaml`,
+   set HL_MASTER_ADDRESS / HL_AGENT_KEY / HL_TESTNET env vars in Render dashboard
+   (NOT committed), deploy, watch logs. Soak on testnet for several days.
+4. **Add missed-bar catch-up + max-daily-loss kill switch** before mainnet.
+5. **Phase 5 mainnet** — only after a clean multi-day testnet soak: transfer real
+   USDC spot→perp in UI, set tiny risk_usd, run one mainnet dry-run (orders logged),
+   then arm live.
