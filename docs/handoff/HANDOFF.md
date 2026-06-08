@@ -18,7 +18,9 @@ round-trip cost (net 0.65–0.70 R/trade). Caveat: EV-minus-top10 ≈ 0.06–0.0
 is fat-tail/convexity driven (skew ~6.7, payoff ~8.7), shared by both periods.
 
 Artifacts: `scripts/robustness_h4_v3.py` (reproducible harness),
-`docs/EMS_V3_H4_robustness_recap.md` (full recap for sharing).
+`docs/EMS_V3_H4_robustness_recap.md` (full recap for sharing). Recap also exported to
+`C:\Users\chill\Desktop\EMS_V3_H4_robustness_recap.md` (Desktop root) for easy opening
+outside the repo — the in-repo copy was buried in the worktree path and wouldn't open.
 
 **ACTION FOR NEXT SESSION:** robustness done → resume the automated HL bot at
 **Phase 4, step 1** (build `ems_live/run.py` entrypoint). See Next Steps below.
