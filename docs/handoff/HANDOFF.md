@@ -2,9 +2,34 @@
 
 ## Last Session Summary
 
+**EMS V3 H4-EMA robustness check — VERDICT: robust, lock period 100**
+
+Detour from the bot build (user request) to validate the V3 H4 filter before
+relying on it. 2-value robustness check (NOT a sweep) on the coded V3 confluence
+filter (H4 EMA fast=20 > slow), varying the slow period 50 vs 100. Reused
+`ems.engine.simulate` directly on cached Binance BTCUSDT. Run A (slow=50) reproduced
+the committed V3 Binance run exactly (480 trades, PF 2.48, total R 459.69).
+
+Deciding numbers: EV gap **4.2%**, EV-minus-top5 gap 11.6%, DD-duration gap 11.4%,
+**overlap 78.7%** — all inside ROBUST thresholds (≤15% gaps, ≥70% overlap). The
+slow-EMA period is cosmetic, not structural; the filter is real. Locked **period 100**
+(shorter DD duration 62 vs 70; also edges EV/PF/total R/Sortino). EV survives 0.20%
+round-trip cost (net 0.65–0.70 R/trade). Caveat: EV-minus-top10 ≈ 0.06–0.09 R — edge
+is fat-tail/convexity driven (skew ~6.7, payoff ~8.7), shared by both periods.
+
+Artifacts: `scripts/robustness_h4_v3.py` (reproducible harness),
+`docs/EMS_V3_H4_robustness_recap.md` (full recap for sharing).
+
+**ACTION FOR NEXT SESSION:** robustness done → resume the automated HL bot at
+**Phase 4, step 1** (build `ems_live/run.py` entrypoint). See Next Steps below.
+
+---
+
+## Previous Session Summary
+
 **EMS live Hyperliquid bot: Phases 2 + 3 shipped — trades autonomously on TESTNET**
 
-Built on top of last session's Phase 0+1 foundation. The bot can now run a full
+Built on top of the Phase 0+1 foundation. The bot can now run a full
 entry→stop→exit lifecycle with real testnet orders. `dry_run` defaults True, so
 autonomous trading is opt-in (flip to False to arm).
 

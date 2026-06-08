@@ -4,6 +4,21 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-05
+
+**EMS V3 H4-EMA period: locked at 100 (robustness-validated)**
+2-value robustness check (not a sweep) on the coded V3 confluence filter
+(H4 EMA fast=20 > slow), slow period 50 vs 100, on cached Binance BTCUSDT.
+Result ROBUST: EV gap 4.2%, EV-minus-top5 gap 11.6%, DD-duration gap 11.4%,
+trade overlap 78.7% — all inside thresholds (≤15% gaps, ≥70% overlap). The period
+is cosmetic, not structural; the filter is a real edge. Locked **slow=100** (shorter
+DD duration 62 vs 70; also marginally better EV/PF/total R/Sortino). EV survives a
+0.20% round-trip cost (net 0.65–0.70 R/trade). Known caveat (both periods): edge is
+fat-tail/convexity driven — EV-minus-top10 ≈ 0.06–0.09 R, skew ~6.7, payoff ~8.7.
+Harness: `scripts/robustness_h4_v3.py`; recap: `docs/EMS_V3_H4_robustness_recap.md`.
+
+---
+
 ## 2026-06-04
 
 **Exchange is the source of truth; local state reconciles on every boot**
