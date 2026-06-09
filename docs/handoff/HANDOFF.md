@@ -2,6 +2,24 @@
 
 ## Last Session Summary
 
+**Generated the missing V3 H4-EMA slow=100 trades CSV**
+
+User had only the slow=50 V3 Binance CSV; the robustness winner (slow=100) had no
+export. Reran `ems.engine.simulate` with `h4_ema_slow=100` on cached Binance BTCUSDT,
+wrote the 11-column Quantprove schema. Result matches robustness exactly: **487 trades,
+WR 23.2%, total R 487.05, PF 2.63**.
+
+Output: `trades_ems_v3_binance_h4ema100.csv` (committed `e97c27e`) + Desktop copy at
+`C:\Users\chill\Desktop\trades_ems_v3_binance_h4ema100.csv`. Companion to the existing
+slow=50 file (`trades_ems_v3_binance.csv`, 480 trades). No code changes.
+
+**ACTION FOR NEXT SESSION:** resume the automated HL bot at **Phase 4, step 1**
+(build `ems_live/run.py` entrypoint). See Next Steps below.
+
+---
+
+## Previous Session Summary
+
 **EMS V3 H4-EMA robustness check — VERDICT: robust, lock period 100**
 
 Detour from the bot build (user request) to validate the V3 H4 filter before
@@ -27,7 +45,7 @@ outside the repo — the in-repo copy was buried in the worktree path and wouldn
 
 ---
 
-## Previous Session Summary
+## Earlier Session Summary
 
 **EMS live Hyperliquid bot: Phases 2 + 3 shipped — trades autonomously on TESTNET**
 
