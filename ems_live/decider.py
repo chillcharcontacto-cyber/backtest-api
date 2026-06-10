@@ -1,14 +1,16 @@
 """
 Single-bar decision predicates shared by the live runner AND the backtest.
 
-This module is the ONE source of truth for EMS V2 entry/exit rules. The live
+This module is the ONE source of truth for EMS V2/V3 entry/exit rules. The live
 runner (ems_live.runner) and the offline driver replay() below both compose the
 exact same predicates, so live behavior cannot drift from the backtested engine.
 
-replay() reproduces ems.engine.simulate() trade-for-trade on identical data.
+replay() reproduces ems.engine.simulate() trade-for-trade on identical data,
+including the V3 H4 confluence filter when an h4 frame is supplied.
 tests/test_live_parity.py asserts that equality.
 
-Long-only (EMS V2 is long-only). No H4 filter here (that is V3).
+Long-only. V3 adds the H4 confluence gate: enter only when H4 EMA(fast) > H4
+EMA(slow) at the last closed H4 bar (mirrors ems.engine.simulate H4 branch).
 """
 from dataclasses import dataclass
 from typing import List, Optional
@@ -41,15 +43,29 @@ class Ctx:
 
     one_hour:   pd.Timedelta
     thirty_min: pd.Timedelta
+    four_hours: pd.Timedelta
+
+    # H4 confluence (V3) — None when no H4 frame supplied
+    h4_ema_fast:  Optional[np.ndarray] = None
+    h4_ema_slow:  Optional[np.ndarray] = None
+    h4_time_idx:  Optional[dict]       = None
 
 
-def build_ctx(m30: pd.DataFrame, h1: pd.DataFrame) -> Ctx:
+def build_ctx(m30: pd.DataFrame, h1: pd.DataFrame,
+              h4: Optional[pd.DataFrame] = None) -> Ctx:
     """
     Build a Ctx from indicator-ready frames.
 
     m30 must have: open, high, low, close, ema_fast, ema_slow, cross_up
     h1  must have: close, h1_ema_trend, h1_ema_exit
+    h4  (optional, V3): h4_ema_fast, h4_ema_slow
     """
+    h4_fast = h4_slow = h4_idx = None
+    if h4 is not None:
+        h4_fast = h4["h4_ema_fast"].to_numpy(dtype=float)
+        h4_slow = h4["h4_ema_slow"].to_numpy(dtype=float)
+        h4_idx  = {t: i for i, t in enumerate(h4.index)}
+
     return Ctx(
         m30_opens  = m30["open"].to_numpy(dtype=float),
         m30_highs  = m30["high"].to_numpy(dtype=float),
@@ -63,6 +79,10 @@ def build_ctx(m30: pd.DataFrame, h1: pd.DataFrame) -> Ctx:
         h1_time_idx  = {t: i for i, t in enumerate(h1.index)},
         one_hour   = pd.Timedelta(hours=1),
         thirty_min = pd.Timedelta(minutes=30),
+        four_hours = pd.Timedelta(hours=4),
+        h4_ema_fast = h4_fast,
+        h4_ema_slow = h4_slow,
+        h4_time_idx = h4_idx,
     )
 
 
@@ -120,12 +140,34 @@ def check_h1_exit(ctx: Ctx, i: int, entry_price: float, trade_sl: float
     return ExitSignal(round(exit_price, 8), exit_time, "H1_EMA100", round(r, 4))
 
 
+def check_h4_confluence(ctx: Ctx, i: int) -> bool:
+    """
+    V3 H4 gate (mirrors ems.engine.simulate H4 branch exactly):
+    at the last closed H4 bar, require H4 EMA(fast) strictly above H4 EMA(slow).
+    Returns True if the gate PASSES (or no H4 frame -> no gate).
+    """
+    if ctx.h4_time_idx is None:
+        return True
+    t = ctx.m30_times[i]
+    h4_lookup = (t - ctx.four_hours).floor("4h")
+    h4_idx = ctx.h4_time_idx.get(h4_lookup)
+    if h4_idx is None:
+        return False
+    h4_fast = ctx.h4_ema_fast[h4_idx]
+    h4_slow = ctx.h4_ema_slow[h4_idx]
+    if np.isnan(h4_fast) or np.isnan(h4_slow):
+        return False
+    return h4_fast > h4_slow
+
+
 def check_entry(ctx: Ctx, i: int, cfg) -> Optional[EntrySignal]:
     """
     Entry pipeline for bar i (crossover at i-1, entry at open[i]):
       Rule 1 : warmup gate (i > warmup_bars)
       Rule 2 : crossover confirmed on bar i-1
       Rule 3 : H1 trend filter (last closed H1 close > H1 EMA50)
+      Rule H4: V3 confluence — H4 EMA(fast) > H4 EMA(slow) [only if h4 supplied
+               AND cfg.h4_filter]
       Rule 5/6: structural SL via unlimited lookback
       Rule 4 : min risk distance
     Returns EntrySignal or None.
@@ -148,6 +190,11 @@ def check_entry(ctx: Ctx, i: int, cfg) -> Optional[EntrySignal]:
     h1_trend = ctx.h1_ema_trend[h1_idx]
     if np.isnan(h1_c) or np.isnan(h1_trend) or h1_c <= h1_trend:
         return None
+
+    # H4 confluence gate (V3) — engine order: after H1 trend, before SL
+    if getattr(cfg, "h4_filter", False) and ctx.h4_time_idx is not None:
+        if not check_h4_confluence(ctx, i):
+            return None
 
     # Structural SL (unlimited lookback) + anchor index for HL adaptation
     res = find_sl_with_anchor(
@@ -181,14 +228,16 @@ def check_entry(ctx: Ctx, i: int, cfg) -> Optional[EntrySignal]:
 #  replay() — offline driver, parity target vs ems.engine.simulate()          #
 # --------------------------------------------------------------------------- #
 
-def replay(m30: pd.DataFrame, h1: pd.DataFrame, cfg) -> List[Trade]:
+def replay(m30: pd.DataFrame, h1: pd.DataFrame, cfg,
+           h4: Optional[pd.DataFrame] = None) -> List[Trade]:
     """
     Drive the predicates bar-by-bar to produce a trade list.
 
-    Must equal ems.engine.simulate(m30, h1, cfg) exactly (no H4). This proves the
-    live predicates encode the same rules as the validated backtest engine.
+    Must equal ems.engine.simulate(m30, h1, cfg, h4) exactly — for both V2 (h4
+    None) and V3 (h4 supplied + cfg.h4_filter). Proves the live predicates encode
+    the same rules as the validated backtest engine.
     """
-    ctx = build_ctx(m30, h1)
+    ctx = build_ctx(m30, h1, h4)
 
     trades: List[Trade] = []
     in_position = False

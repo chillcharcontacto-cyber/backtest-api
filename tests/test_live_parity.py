@@ -17,7 +17,8 @@ import pytest
 
 from ems.config import Config
 from ems.engine import simulate
-from ems.indicators import add_emas, add_h1_emas, mark_crossovers
+from ems.indicators import (add_emas, add_h1_emas, mark_crossovers,
+                            build_h4, add_h4_emas)
 from ems_live.decider import replay
 
 DATA_M30 = "data/BTCUSDT_30m.parquet"
@@ -94,3 +95,29 @@ def test_replay_matches_simulate_real_data():
     assert len(actual) == len(expected)
     for a, e in zip(actual, expected):
         assert a == e
+
+
+@pytest.mark.skipif(
+    not (os.path.exists(DATA_M30) and os.path.exists(DATA_H1)),
+    reason="Binance parquet cache not present",
+)
+def test_replay_matches_simulate_v3_h4ema100_real_data():
+    """V3 parity: live replay with H4 confluence (EMA20>EMA100) == engine.simulate."""
+    m30 = pd.read_parquet(DATA_M30).iloc[:30000]
+    h1r = pd.read_parquet(DATA_H1).iloc[:15000]
+    m30 = mark_crossovers(add_emas(m30, 20, 50))
+    h1 = add_h1_emas(h1r, 50, 100)
+    h4 = add_h4_emas(build_h4(h1r), 20, 100)
+    c = Config(h4_filter=True, h4_ema_fast=20, h4_ema_slow=100,
+               warmup_bars=500, strategy_name="EMA-Cross-H4F")
+
+    expected = simulate(m30, h1, c, h4)
+    actual = replay(m30, h1, c, h4)
+
+    assert len(expected) > 50, "V3 slice should still produce 50+ trades"
+    assert len(actual) == len(expected)
+    for a, e in zip(actual, expected):
+        assert a == e
+    # V3 must be more selective than V2 on the same slice
+    v2 = replay(m30, h1, Config(warmup_bars=500, strategy_name="EMA-Cross"))
+    assert len(actual) < len(v2), "H4 filter should cut trades vs V2"

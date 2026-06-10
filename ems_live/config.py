@@ -14,12 +14,17 @@ class LiveConfig:
     coin:           str   = "BTC"        # Hyperliquid perp coin
     binance_symbol: str   = "BTCUSDT"    # Binance signal symbol
 
-    # --- indicators (must match EMS V2) ---
+    # --- indicators (must match EMS V3) ---
     ema_fast:       int   = 20
     ema_slow:       int   = 50
     h1_trend_ema:   int   = 50
     h1_exit_ema:    int   = 100
     min_risk_pct:   float = 0.1          # 0.1 = 0.1% min stop distance
+
+    # --- H4 confluence filter (V3 — the locked final model) ---
+    h4_filter:      bool  = True         # enter only when H4 EMA20 > H4 EMA100
+    h4_ema_fast:    int   = 20
+    h4_ema_slow:    int   = 100          # robustness-locked period
 
     # Live has no warmup gate (EMAs seeded by lookback fetch); kept for decider parity
     warmup_bars:    int   = 0
@@ -46,7 +51,7 @@ class LiveConfig:
 
     # --- persistence / labels ---
     state_path:     str   = "ems_live_state.json"
-    strategy_name:  str   = "EMA-Cross"
+    strategy_name:  str   = "EMA-Cross-H4F"
 
     @property
     def hl_api_url(self) -> str:

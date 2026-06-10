@@ -18,7 +18,8 @@ from typing import Optional
 
 import pandas as pd
 
-from ems.indicators import add_emas, add_h1_emas, mark_crossovers
+from ems.indicators import (add_emas, add_h1_emas, mark_crossovers,
+                            build_h4, add_h4_emas)
 from .config import LiveConfig
 from .decider import build_ctx, check_entry, check_h1_exit
 from .feed import fetch_binance_recent
@@ -77,12 +78,20 @@ def guard_order(entry: float, sl: float, size: float, cfg: LiveConfig):
 # --------------------------------------------------------------------------- #
 
 def load_signal_frames(cfg: LiveConfig):
-    """Fetch + indicator-decorate the Binance signal frames."""
+    """
+    Fetch + indicator-decorate the Binance signal frames.
+    Returns (m30, h1, h4). h4 is None unless cfg.h4_filter (V3), in which case it
+    is built from H1 with EMA(fast)/EMA(slow) — same construction as the backtest.
+    """
     m30 = fetch_binance_recent(cfg.binance_symbol, "30m", cfg.lookback_m30)
     h1  = fetch_binance_recent(cfg.binance_symbol, "1h",  cfg.lookback_h1)
     m30 = mark_crossovers(add_emas(m30, cfg.ema_fast, cfg.ema_slow))
-    h1  = add_h1_emas(h1, cfg.h1_trend_ema, cfg.h1_exit_ema)
-    return m30, h1
+    h1d = add_h1_emas(h1, cfg.h1_trend_ema, cfg.h1_exit_ema)
+
+    h4 = None
+    if cfg.h4_filter:
+        h4 = add_h4_emas(build_h4(h1), cfg.h4_ema_fast, cfg.h4_ema_slow)
+    return m30, h1d, h4
 
 
 # --------------------------------------------------------------------------- #
@@ -95,8 +104,8 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
     `broker` may be None in pure dry_run flows that never touch the exchange.
     """
     state = store.load()
-    m30, h1 = load_signal_frames(cfg)
-    ctx = build_ctx(m30, h1)
+    m30, h1, h4 = load_signal_frames(cfg)
+    ctx = build_ctx(m30, h1, h4)
     i = len(m30) - 1
     t = ctx.m30_times[i]
     log(f"[tick] bar={t}  status={state.status}")
