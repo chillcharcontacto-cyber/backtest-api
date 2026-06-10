@@ -6,6 +6,14 @@ A running list of architectural and product decisions, newest first.
 
 ## 2026-06-05
 
+**Cost model status: only flat trading fees tested; funding/swap is unmodeled**
+The only cost ever applied to EMS is a flat 0.20% round-trip (fees/spread) in the
+robustness check, where EV survived (net 0.65–0.70 R/trade). Perp funding/swap has
+never been modeled and is duration-dependent — EMS holds long (avg ~33h, max
+290–362h), so the long-hold tail could lose meaningful R to funding. Decision: treat
+funding as the next cost test; exported V3 trade CSVs with exact Madrid open/close
+timestamps + `sl_pct` so any cost% converts to R, ready to join a HL funding series.
+
 **EMS V3 H4-EMA period: locked at 100 (robustness-validated)**
 2-value robustness check (not a sweep) on the coded V3 confluence filter
 (H4 EMA fast=20 > slow), slow period 50 vs 100, on cached Binance BTCUSDT.

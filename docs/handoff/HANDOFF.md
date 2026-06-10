@@ -2,16 +2,25 @@
 
 ## Last Session Summary
 
-**Generated the missing V3 H4-EMA slow=100 trades CSV**
+**V3 trade CSVs with Madrid open/close timestamps (for swap-cost analysis)**
 
-User had only the slow=50 V3 Binance CSV; the robustness winner (slow=100) had no
-export. Reran `ems.engine.simulate` with `h4_ema_slow=100` on cached Binance BTCUSDT,
-wrote the 11-column Quantprove schema. Result matches robustness exactly: **487 trades,
-WR 23.2%, total R 487.05, PF 2.63**.
+User wants to filter trades through funding/swap cost. Generated both V3 periods with
+exact entry+exit timestamps in Europe/Madrid (DST-aware, +0200/+0100), plus
+`duration_hours`, entry/sl/exit prices, and `sl_pct` (so any cost% → R via
+`cost_in_R = cost% / sl_pct`).
+- `trades_ems_v3_binance_h4ema50_madrid.csv` — 480 trades, total R 459.69
+- `trades_ems_v3_binance_h4ema100_madrid.csv` — 487 trades, total R 487.05
+- Committed `5179be5`; Desktop copies too.
 
-Output: `trades_ems_v3_binance_h4ema100.csv` (committed `e97c27e`) + Desktop copy at
-`C:\Users\chill\Desktop\trades_ems_v3_binance_h4ema100.csv`. Companion to the existing
-slow=50 file (`trades_ems_v3_binance.csv`, 480 trades). No code changes.
+**Cost-testing status (answered for user):**
+- Fees/spread: tested ONCE — flat 0.20% round-trip in the robustness check; EV
+  survived (net 0.65–0.70 R/trade).
+- **Swap/funding: NEVER modeled.** Duration-dependent; EMS holds long (avg ~33h,
+  **max 290–362h** = many 8h funding periods), so funding can meaningfully erode the
+  long-hold tail. This is the open cost question the Madrid CSVs are meant to feed.
+
+Prior CSV exports this thread: plain slow=100 CSV (`trades_ems_v3_binance_h4ema100.csv`,
+`e97c27e`); slow=50 is the original `trades_ems_v3_binance.csv`.
 
 **ACTION FOR NEXT SESSION:** resume the automated HL bot at **Phase 4, step 1**
 (build `ems_live/run.py` entrypoint). See Next Steps below.
@@ -118,6 +127,11 @@ but left in `dry_run=True` (safe default). Account funded + configured:
 **EMS engine (pre-existing):**
 - Parity check vs TradingView Pine strategy report
 - Short-side extension — Samuel may have short rules, not discussed
+- **Swap/funding cost analysis** — only a flat 0.20% round-trip fee has been tested;
+  perp funding is unmodeled. Madrid-timestamped CSVs are ready
+  (`trades_ems_v3_binance_h4ema{50,100}_madrid.csv`). To compute funding-in-R per
+  trade, join a HL BTC funding-rate series to each [open, close] window
+  (`funding_in_R ≈ Σ funding_rate / sl_pct`). Offered to build the filter script.
 
 **MCT engine (carried):**
 - No-divergence test result outstanding
