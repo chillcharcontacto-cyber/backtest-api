@@ -2,32 +2,44 @@
 
 ## Last Session Summary
 
-**V3 trade CSVs with Madrid open/close timestamps (for swap-cost analysis)**
+**Final model LOCKED = V3 (H4 EMA20>EMA100). HL bot converted to V3 + entrypoint built.**
 
-User wants to filter trades through funding/swap cost. Generated both V3 periods with
-exact entry+exit timestamps in Europe/Madrid (DST-aware, +0200/+0100), plus
-`duration_hours`, entry/sl/exit prices, and `sl_pct` (so any cost% → R via
-`cost_in_R = cost% / sl_pct`).
-- `trades_ems_v3_binance_h4ema50_madrid.csv` — 480 trades, total R 459.69
-- `trades_ems_v3_binance_h4ema100_madrid.csv` — 487 trades, total R 487.05
-- Committed `5179be5`; Desktop copies too.
+Model-selection + bot work:
+1. **Caught a definition mismatch:** coded "V3" = H4 EMA20 > EMA100 *confluence* (two
+   EMAs); user's mental model was *price > a single H4 EMA*. Clarified explicitly.
+2. **3 alt models** built per user spec (base / price>H4 EMA50 / price>H4 EMA100), all
+   with H1 **EMA50** exit (≠ the prior EMA100 exit). Full Binance CSVs w/ Madrid
+   timestamps. Results: base PF 1.92 (1132 tr), r1 PF 2.01 (686), r2 PF 2.30 (649).
+   Harness `scripts/three_models.py`, commit `97a4954`.
+3. **Cross-compared** vs confluence V3 (EMA100 exit). Confluence **V3 EMA20>EMA100**
+   strongest: EV 1.00, PF 2.63, and the only robustness-validated one. (Caveat noted:
+   exit EMA differs 100 vs 50, so it's a confounded comparison.)
+4. **User decision:** final = **V3 confluence, H4 EMA20>EMA100, H1 EMA100 exit.**
+   Reasoning: wins every quality metric; R2's lower historical max-DD is a mirage —
+   Monte-Carlo p95 DD is ~equal (−50 vs −52 R); the extra 171 trades are dilutive.
+5. **Bot → V3:** decider gains `check_h4_confluence` (mirrors `engine.simulate` H4
+   branch exactly), applied after H1 trend, before SL; `build_ctx`/`replay` take an
+   optional h4 frame; config `h4_filter=True, h4_ema_slow=100, EMA-Cross-H4F`; runner
+   builds H4 from Binance H1. **V3 parity test green** (live replay == engine V3,
+   byte-identical). 49 tests. Commit `55ce69c`.
+6. **Phase 4 entrypoint** `ems_live/run.py` — `python -m ems_live.run [once]`. Dry tick
+   on testnet OK; H4 gate currently **blocks longs** (BTC H4 EMA20 < EMA100). Commit
+   `4b28b70`.
 
-**Cost-testing status (answered for user):**
-- Fees/spread: tested ONCE — flat 0.20% round-trip in the robustness check; EV
-  survived (net 0.65–0.70 R/trade).
-- **Swap/funding: NEVER modeled.** Duration-dependent; EMS holds long (avg ~33h,
-  **max 290–362h** = many 8h funding periods), so funding can meaningfully erode the
-  long-hold tail. This is the open cost question the Madrid CSVs are meant to feed.
-
-Prior CSV exports this thread: plain slow=100 CSV (`trades_ems_v3_binance_h4ema100.csv`,
-`e97c27e`); slow=50 is the original `trades_ems_v3_binance.csv`.
-
-**ACTION FOR NEXT SESSION:** resume the automated HL bot at **Phase 4, step 1**
-(build `ems_live/run.py` entrypoint). See Next Steps below.
+Cost-testing status (unchanged): fees tested once (0.20% round-trip, EV survives);
+**swap/funding still unmodeled** — Madrid-timestamped CSVs ready to feed it.
 
 ---
 
-## Previous Session Summary
+## Previous Session Summary — V3 trade CSVs with Madrid timestamps (swap-cost prep)
+
+Generated V3 CSVs with exact Europe/Madrid open/close timestamps + `sl_pct`
+(`cost_in_R = cost% / sl_pct`): `trades_ems_v3_binance_h4ema{50,100}_madrid.csv`
+(`5179be5`). For modeling funding vs holding duration (avg ~33h, max 290–362h).
+
+---
+
+## Earlier Session Summary — V3 H4-EMA robustness (lock period 100)
 
 **EMS V3 H4-EMA robustness check — VERDICT: robust, lock period 100**
 
@@ -54,7 +66,7 @@ outside the repo — the in-repo copy was buried in the worktree path and wouldn
 
 ---
 
-## Earlier Session Summary
+## Older Session Summary — live bot Phases 2+3 (testnet lifecycle)
 
 **EMS live Hyperliquid bot: Phases 2 + 3 shipped — trades autonomously on TESTNET**
 
@@ -101,25 +113,27 @@ Commits pushed: Phase 2 `7759439`, Phase 3 `8e82fb8`.
 
 ## Currently Working On
 
-Nothing mid-flight. Phase 3 complete and committed. Bot is armed-capable on testnet
-but left in `dry_run=True` (safe default). Account funded + configured:
+Nothing mid-flight. Bot is **V3, parity-locked, entrypoint built**, left in
+`dry_run=True` (safe). Strategy frozen: V3 confluence, H4 EMA20>EMA100, H1 EMA100
+exit, long-only. Ready for soak (local then Render). Account funded + configured:
 - Testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`
-- Testnet equity: **999 mock USDC** (Unified Account — usable for perps directly)
+- Testnet equity: **~999 mock USDC** (Unified Account — usable for perps directly)
 - Agent (API) wallet `ems-bot` authorized, BTC leverage set 3x isolated
 - Credentials in gitignored `.env` (HL_MASTER_ADDRESS, HL_AGENT_KEY, HL_TESTNET=true)
-- Mainnet: 9.8 USDC sits in spot (the deposit that unlocked the faucet gate)
+- Mainnet: 9.8 USDC in spot (the deposit that unlocked the faucet gate)
+- Run it: `python -m ems_live.run once` (single tick) / `python -m ems_live.run` (forever)
 
 ---
 
 ## Parked / Unfinished
 
-**EMS live bot — remaining phases:**
-- **Phase 4: unattended deploy.** Add entrypoint `python -m ems_live.run`
-  (load `.env` → `run_forever`); add a Render background worker to `render.yaml`
-  with HL_* env vars; soak-test on live testnet bars for days to catch a real
-  autonomous trade. Decide: local soak first vs straight to Render.
-- **Missed-bar catch-up on restart** — runner currently resumes at next bar; if the
-  worker is down across a `:30` H1-exit bar, that exit is skipped. Add catch-up.
+**EMS live bot — remaining phases (entrypoint DONE; bot is V3):**
+- **Render worker** — add a background worker to `render.yaml`
+  (`startCommand: python -m ems_live.run`); set HL_MASTER_ADDRESS / HL_AGENT_KEY /
+  HL_TESTNET=true / EMS_DRY_RUN=true as Render env vars (NOT committed); deploy,
+  soak on testnet several days.
+- **Missed-bar catch-up on restart** — runner resumes at next bar; if down across a
+  `:30` H1-exit bar, that exit is skipped. Add catch-up.
 - **max-daily-loss kill switch** — designed, not yet implemented.
 - **Phase 5: mainnet.** Flip testnet=False, transfer real USDC spot→perp (master-
   signed, in UI — agent can't), tiny `risk_usd`, mainnet dry-run first, then live.
@@ -141,19 +155,16 @@ but left in `dry_run=True` (safe default). Account funded + configured:
 
 ---
 
-## Next Steps (tomorrow — exact order)
+## Next Steps (exact order)
 
-1. **Build the entrypoint** — `ems_live/run.py`: load `.env`, construct LiveConfig +
-   PositionStore + LiveBroker, call `run_forever()`. Add a tiny `.env` loader
-   (no new dependency) or add `python-dotenv`.
-2. **Local soak test (testnet, dry_run=True first)** — run `python -m ems_live.run`
-   on your machine for ~1 hour, watch it tick each bar, confirm scheduler wakes on
-   :00/:30, fetches, evaluates, logs "no signal". Then flip `dry_run=False` and let
-   it run on testnet to (eventually) catch a real crossover and trade autonomously.
-3. **Deploy to Render worker** — add background worker service to `render.yaml`,
-   set HL_MASTER_ADDRESS / HL_AGENT_KEY / HL_TESTNET env vars in Render dashboard
-   (NOT committed), deploy, watch logs. Soak on testnet for several days.
-4. **Add missed-bar catch-up + max-daily-loss kill switch** before mainnet.
+1. **Local soak** — `python -m ems_live.run` on your machine, `dry_run=True`, a few
+   hours. Confirm it wakes on :00/:30, fetches, evaluates, logs. (H4 gate currently
+   blocks longs — BTC H4 EMA20 < EMA100 — so expect "no signal" until H4 flips up.)
+2. **Render worker** — add bg worker to `render.yaml`
+   (`startCommand: python -m ems_live.run`), set HL_* + EMS_DRY_RUN=true env vars in
+   the Render dashboard (NOT committed), deploy, soak on testnet several days.
+3. **Add missed-bar catch-up + max-daily-loss kill switch** before arming.
+4. **Arm testnet** — set `EMS_DRY_RUN=false`, let it catch a real autonomous trade,
+   verify entry→stop→exit on the testnet UI.
 5. **Phase 5 mainnet** — only after a clean multi-day testnet soak: transfer real
-   USDC spot→perp in UI, set tiny risk_usd, run one mainnet dry-run (orders logged),
-   then arm live.
+   USDC spot→perp in UI, tiny risk_usd, one mainnet dry-run, then arm live.

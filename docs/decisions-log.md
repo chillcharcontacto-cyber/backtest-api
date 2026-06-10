@@ -4,6 +4,33 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-10
+
+**Final live model LOCKED: V3 confluence (H4 EMA20 > EMA100), H1 EMA100 exit**
+After comparing six variants — confluence V3 (EMA20>slow, slow∈{50,100}) vs three
+price-above-single-H4-EMA models (base / EMA50 / EMA100, all on an EMA50 H1 exit) —
+the confluence **V3 EMA20>EMA100** wins every quality metric (EV 1.00, PF 2.63) and
+is the only robustness-validated one. R2 (price>H4 EMA100) had a shallower historical
+max-DD, but that edge is a mirage: Monte-Carlo p95 drawdowns are ~equal (−50 vs −52 R)
+— the extra 171 trades just smooth the path without adding net value. Structural
+rationale: requiring fast-EMA-above-slow waits for a *confirmed* trend; price barely
+poking one average lets in the trades that net negative. The HL bot runs this model.
+
+**Clarified a long-standing definition gap: "V3" = confluence, not price>EMA**
+The coded V3 filter is `H4 EMA20 > H4 EMA(slow)` (two H4 EMAs), NOT "price above a
+single H4 EMA" as previously described in passing. All committed V3 backtests/CSVs and
+the robustness check are the confluence version. The price>single-EMA variant was
+tested separately (`scripts/three_models.py`) and rejected per the decision above.
+
+**Bot strategy in the live decider mirrors the engine, enforced by a parity test**
+The H4 confluence gate added to `ems_live/decider.py` (`check_h4_confluence`) mirrors
+`ems.engine.simulate`'s H4 branch exactly (last closed H4, `EMA_fast > EMA_slow`,
+applied after the H1 trend filter and before the SL anchor). `replay()` now accepts an
+h4 frame and a new parity test asserts live-V3 == engine-V3 byte-identical. The
+single-source-of-truth invariant (live can't drift from backtest) now covers V3.
+
+---
+
 ## 2026-06-05
 
 **Cost model status: only flat trading fees tested; funding/swap is unmodeled**
