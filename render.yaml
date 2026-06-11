@@ -7,3 +7,32 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+
+  # EMS live trading bot (V3, Hyperliquid). Background worker, no HTTP port.
+  # Secrets (HL_*) are set in the Render dashboard, NOT committed (sync: false).
+  - type: worker
+    name: ems-live-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m ems_live.run
+    disk:
+      name: ems-state
+      mountPath: /data            # persists position + day-ledger across deploys
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: HL_TESTNET
+        value: "true"             # flip to "false" only for mainnet
+      - key: EMS_DRY_RUN
+        value: "true"             # SAFE: compute+log, no orders. Flip to "false" to ARM.
+      - key: EMS_RISK_USD
+        value: "20"
+      - key: EMS_MAX_DAILY_LOSS_R
+        value: "3"
+      - key: EMS_STATE_PATH
+        value: /data/ems_live_state.json
+      - key: HL_MASTER_ADDRESS
+        sync: false               # set in dashboard
+      - key: HL_AGENT_KEY
+        sync: false               # SECRET — set in dashboard, never commit

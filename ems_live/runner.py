@@ -21,11 +21,12 @@ import pandas as pd
 from ems.indicators import (add_emas, add_h1_emas, mark_crossovers,
                             build_h4, add_h4_emas)
 from .config import LiveConfig
-from .decider import build_ctx, check_entry, check_h1_exit
+from .decider import build_ctx, check_entry, check_h1_exit, check_sl_hit
 from .feed import fetch_binance_recent
 from .sl_adapter import adapt_sl_to_hl
 from .position import (PositionState, PositionStore, reconcile,
                        FLAT, IN_POSITION)
+from .daylimit import DayLedgerStore, record as ledger_record, is_halted
 
 
 # --------------------------------------------------------------------------- #
@@ -108,13 +109,28 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
     ctx = build_ctx(m30, h1, h4)
     i = len(m30) - 1
     t = ctx.m30_times[i]
+    today = str(t.date())
     log(f"[tick] bar={t}  status={state.status}")
 
-    # ---------------- IN POSITION: manage H1 exit ----------------
+    # ---------------- IN POSITION ----------------
     if state.status == IN_POSITION:
+        # 1) Did the resting stop fire? Exchange is the source of truth.
+        if not cfg.dry_run and broker is not None:
+            if broker.open_position() is None:
+                log("  position gone on exchange (resting stop fired) — recording -1R")
+                _record(cfg, -1.0, today, log)
+                return store_flat(store)
+        else:
+            # dry: simulate intrabar stop hit on the bar low
+            if check_sl_hit(ctx, i, state.sl_price):
+                log("  DRY_RUN: simulated SL hit -> -1R")
+                _record(cfg, -1.0, today, log)
+                return store_flat(store)
+
+        # 2) H1 EMA100 exit
         ex = check_h1_exit(ctx, i, state.entry_price, state.sl_price)
         if ex is None:
-            log("  in position — no H1 exit this bar (stop resting on exchange)")
+            log("  in position — no exit this bar (stop resting on exchange)")
             return state
         log(f"  H1_EMA100 exit signal @ {ex.exit_price:.2f} (r={ex.r_multiple})")
         if cfg.dry_run:
@@ -126,12 +142,18 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
                     broker.cancel_order(state.stop_oid)
                 except Exception as e:
                     log(f"  (stop cancel after close failed, likely already gone: {e!r})")
+        _record(cfg, ex.r_multiple, today, log)
         return store_flat(store)
 
     # ---------------- FLAT: check entry ----------------
     sig = check_entry(ctx, i, cfg)
     if sig is None:
         log("  flat — no entry signal")
+        return state
+
+    # kill switch — halt new entries once today's loss limit is hit
+    if _halted(cfg, today):
+        log(f"  KILL SWITCH active — daily loss limit reached, no entries today ({today})")
         return state
 
     # adapt SL to Hyperliquid candles over the Binance anchor range
@@ -193,6 +215,28 @@ def store_flat(store: PositionStore) -> PositionState:
     s = PositionState()
     store.save(s)
     return s
+
+
+# --------------------------------------------------------------------------- #
+#  Daily-loss kill switch helpers                                              #
+# --------------------------------------------------------------------------- #
+
+def _ledger_store(cfg: LiveConfig) -> DayLedgerStore:
+    return DayLedgerStore(cfg.state_path + ".day")
+
+
+def _record(cfg: LiveConfig, r: float, today: str, log=print):
+    s = _ledger_store(cfg)
+    led = ledger_record(s.load(), r, today)
+    s.save(led)
+    log(f"  day P&L: {led.realized_r:+.2f}R over {led.trades} trade(s)  day={led.day}")
+    if is_halted(led, today, cfg.max_daily_loss_r):
+        log(f"  >>> DAILY LOSS LIMIT HIT ({led.realized_r:+.2f}R) — entries halted today")
+    return led
+
+
+def _halted(cfg: LiveConfig, today: str) -> bool:
+    return is_halted(_ledger_store(cfg).load(), today, cfg.max_daily_loss_r)
 
 
 # --------------------------------------------------------------------------- #

@@ -14,4 +14,4 @@ data/
 .env
 *.key
 ems_live_secrets.json
-ems_live_state.json
+ems_live_state.json*

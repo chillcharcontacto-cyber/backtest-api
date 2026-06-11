@@ -37,6 +37,7 @@ class LiveConfig:
     max_risk_band_pct:  float = 15.0     # reject if stop distance > this % of entry
     leverage:           int   = 3        # leverage cap on the coin
     isolated_margin:    bool  = True     # isolated so one trade can't bleed the account
+    max_daily_loss_r:   float = 3.0      # halt new entries if today's realized R <= -this (0 disables)
     dry_run:            bool  = True     # compute+log orders, DO NOT send (flip in Phase 3)
 
     # --- scheduler ---
