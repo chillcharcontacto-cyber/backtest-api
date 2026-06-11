@@ -4,6 +4,32 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-11
+
+**Per-tick exchange reconcile — the exchange is checked every tick, not just on boot**
+The resting stop lives on the exchange, so when it fires the bot must learn of it. The
+live `tick()` now queries the exchange position at the top of the IN_POSITION branch;
+if flat, the stop fired → record −1R and go flat. Without this a long-running process
+would never notice a stop fill (it only reconciled on restart) and would keep managing
+a phantom position. The designed SL outcome is −1R, so that is what's booked.
+
+**Max-daily-loss kill switch — circuit breaker before any unattended arming**
+`DayLedger` accumulates realized R per UTC day (rolls at the date boundary). New
+entries halt for the rest of the day once realized R ≤ −`max_daily_loss_r` (default
+3R; 0 disables). This is a hard precondition for running armed on Render — a bad run
+of stops can't bleed indefinitely. State persisted as a JSON sidecar next to the
+position state.
+
+**Render deployment is a `worker` with a persistent disk; secrets stay in the dashboard**
+The bot is a background `worker` (no HTTP port), not a web service. A 1 GB disk at
+`/data` persists the position state + day-ledger across deploys (Render's default FS is
+ephemeral; without the disk a redeploy mid-position loses SL/exit context — the resting
+stop still protects the position, but management degrades). HL_MASTER_ADDRESS and
+HL_AGENT_KEY are `sync: false` so they are entered in the dashboard and never committed.
+`EMS_DRY_RUN=true` is the committed default; arming is a deliberate dashboard flip.
+
+---
+
 ## 2026-06-10
 
 **Final live model LOCKED: V3 confluence (H4 EMA20 > EMA100), H1 EMA100 exit**
