@@ -1,133 +1,65 @@
 # Handoff
 
-## Last Session Summary
+## Last Session Summary — Render deploy attempt (BLOCKED, resume at step 4)
 
-**Autonomy hardening — V3 bot is now safe to run unattended. Render blueprint saved.**
+No code shipped. Attempted to drive the Render Blueprint deploy (step 4) via the
+Chrome extension. **Got as far as the repo-select page** (`dashboard.render.com/
+select-repo?type=blueprint`) with `chillcharcontacto-cyber/backtest-api` listed and a
+**Connect** button visible — but could not complete it.
 
-All CODE for full-autonomous testnet operation is done. Remaining work is the Render
-deploy (user actions — see Next Steps, START AT STEP 4). Bot stays `dry_run=True` by
-default; arming is a single env-var flip on Render.
+**Blocker (important for next time):** Render's dashboard is a live SPA that never
+reaches `document_idle`, so every Claude-in-Chrome DOM tool (`find`, `read_page`,
+`screenshot`, `form_input`) times out at 45s. Blind pixel-clicks via the extension
+landed nowhere reliable (coordinate scale couldn't be calibrated without an
+in-Chrome screenshot). Desktop screenshots (computer-use) DO work for *seeing* the
+page, but Chrome is read-tier so computer-use can't click.
 
-Built this session:
-1. **Per-tick exchange reconcile** (`runner.tick`, live) — when IN_POSITION, check the
-   exchange first; if the position is gone, the resting stop fired → record −1R, go
-   flat. Closes a real gap: a stop fill was previously only detected on restart, so a
-   running bot would wrongly believe it was still in a position. Dry path simulates the
-   intrabar stop hit on the bar low.
+**Working approach for next session:** hybrid — Claude watches via desktop
+screenshots and calls each click; the USER clicks (they're at the keyboard). Or the
+user just runs the 5-click Blueprint flow solo with the values below. Do NOT try to
+fully auto-drive Render again — it doesn't work.
+
+---
+
+## Previous Session Summary — autonomy hardening (V3 bot safe to run unattended)
+
+All CODE for full-autonomous testnet operation is done; `dry_run=True` default.
+Commit `5a29d53`, 58 tests green.
+1. **Per-tick exchange reconcile** (`runner.tick`) — detects the resting stop firing
+   while running (queries exchange each tick; if flat → record −1R, go flat). Closed a
+   real gap (stop fills were only seen on restart).
 2. **Max-daily-loss kill switch** (`ems_live/daylimit.py`) — `DayLedger` tracks realized
-   R per UTC day, rolls at the date boundary; entries halt for the rest of the day once
-   realized R ≤ −`max_daily_loss_r` (config default 3.0; 0 disables). R recorded on
-   every close (SL fill or H1 exit).
+   R per UTC day, halts entries at ≤ −`max_daily_loss_r` (default 3R; 0 disables).
 3. **Render worker blueprint** (`render.yaml`) — `type: worker`,
-   `startCommand: python -m ems_live.run`, persistent disk at `/data` (position +
-   day-ledger survive deploys). Env preset: HL_TESTNET=true, EMS_DRY_RUN=true, risk 20,
-   kill-switch 3R, EMS_STATE_PATH=/data/...; HL_MASTER_ADDRESS + HL_AGENT_KEY are
-   `sync: false` (dashboard secrets, never committed).
+   `python -m ems_live.run`, persistent disk `/data`; HL_* secrets `sync:false`.
 4. **Entrypoint env** — `run.py` reads EMS_STATE_PATH + EMS_MAX_DAILY_LOSS_R.
 
-Tests: **58 green** (+9 daylimit). Dry tick verified end-to-end. Commit `5a29d53`.
-
-Prior in this thread: V3 locked as final model + bot converted to V3 + entrypoint
-(`97a4954`, `55ce69c`, `4b28b70`).
-
 ---
 
-## Previous Session Summary — V3 locked + bot converted to V3 + entrypoint
+## Earlier History (condensed — full detail in git + decisions-log)
 
-Final model LOCKED = **V3 confluence, H4 EMA20>EMA100, H1 EMA100 exit** (wins every
-quality metric; R2's lower historical DD is an MC-p95 mirage). Decider gained
-`check_h4_confluence` (mirrors `engine.simulate`); V3 parity test byte-identical;
-config `h4_filter=True, slow=100, EMA-Cross-H4F`; entrypoint `ems_live/run.py`. Three
-alt price-filter models built/compared + rejected (`scripts/three_models.py`).
-
----
-
-## Older Session Summary — V3 trade CSVs with Madrid timestamps (swap-cost prep)
-
-Generated V3 CSVs with exact Europe/Madrid open/close timestamps + `sl_pct`
-(`cost_in_R = cost% / sl_pct`): `trades_ems_v3_binance_h4ema{50,100}_madrid.csv`
-(`5179be5`). For modeling funding vs holding duration (avg ~33h, max 290–362h).
-
----
-
-## Earlier Session Summary — V3 H4-EMA robustness (lock period 100)
-
-**EMS V3 H4-EMA robustness check — VERDICT: robust, lock period 100**
-
-Detour from the bot build (user request) to validate the V3 H4 filter before
-relying on it. 2-value robustness check (NOT a sweep) on the coded V3 confluence
-filter (H4 EMA fast=20 > slow), varying the slow period 50 vs 100. Reused
-`ems.engine.simulate` directly on cached Binance BTCUSDT. Run A (slow=50) reproduced
-the committed V3 Binance run exactly (480 trades, PF 2.48, total R 459.69).
-
-Deciding numbers: EV gap **4.2%**, EV-minus-top5 gap 11.6%, DD-duration gap 11.4%,
-**overlap 78.7%** — all inside ROBUST thresholds (≤15% gaps, ≥70% overlap). The
-slow-EMA period is cosmetic, not structural; the filter is real. Locked **period 100**
-(shorter DD duration 62 vs 70; also edges EV/PF/total R/Sortino). EV survives 0.20%
-round-trip cost (net 0.65–0.70 R/trade). Caveat: EV-minus-top10 ≈ 0.06–0.09 R — edge
-is fat-tail/convexity driven (skew ~6.7, payoff ~8.7), shared by both periods.
-
-Artifacts: `scripts/robustness_h4_v3.py` (reproducible harness),
-`docs/EMS_V3_H4_robustness_recap.md` (full recap for sharing). Recap also exported to
-`C:\Users\chill\Desktop\EMS_V3_H4_robustness_recap.md` (Desktop root) for easy opening
-outside the repo — the in-repo copy was buried in the worktree path and wouldn't open.
-
-**ACTION FOR NEXT SESSION:** robustness done → resume the automated HL bot at
-**Phase 4, step 1** (build `ems_live/run.py` entrypoint). See Next Steps below.
-
----
-
-## Oldest Session Summary — live bot Phases 2+3 (testnet lifecycle)
-
-**EMS live Hyperliquid bot: Phases 2 + 3 shipped — trades autonomously on TESTNET**
-
-Built on top of the Phase 0+1 foundation. The bot can now run a full
-entry→stop→exit lifecycle with real testnet orders. `dry_run` defaults True, so
-autonomous trading is opt-in (flip to False to arm).
-
-**Phase 2 — state machine + scheduler** (`position.py`, `runner.py`):
-- `PositionState` + atomic JSON `PositionStore`
-- `reconcile()` vs exchange truth (4-case matrix): flat/flat=OK_FLAT;
-  inpos/inpos=OK_RESUME (keep local SL meta); inpos/exch-flat=CLOSED_WHILE_DOWN;
-  flat/exch-pos=UNEXPECTED_POSITION
-- `compute_size()` fixed-$ risk: `size = risk_usd / (entry - sl_hl)`
-- `guard_order()` safety gate: sl<entry, risk band [min_risk_pct, max_risk_band_pct],
-  absolute `max_notional` ceiling, positive size
-- `tick()`, `boot_reconcile()`, `seconds_until_next_bar()`, `run_forever()` loop
-- config gained: max_notional_usd, max_risk_band_pct, leverage, isolated_margin,
-  dry_run, poll_buffer_sec
-
-**Phase 3 — live order execution** (`broker.py`):
-- `market_entry()` (market_open long, returns avg fill px), `place_stop()`
-  (reduce-only stop-market trigger, returns resting oid), `market_close()`,
-  `cancel_order()`, `set_margin_mode()` (leverage + isolated)
-- `account_value()` sums perp + spot USDC (Unified Account: perp marginSummary
-  reads 0 while collateral sits in spot)
-- `round_px()` enforces HL perp rule: 5 significant figures AND ≤(6-szDecimals)
-  decimals → BTC ~65k uses integer prices
-- runner live path: capture actual avg_px; **stop-confirmed-or-flatten** (fill
-  without working stop → immediate market_close); cancel resting stop on H1 exit
-
-**Testnet verification (real fake-money orders):**
-- direct broker lifecycle: entry filled, stop rested, close, flat ✅
-- forced runner tick: SL adaptation + sizing + guards + persistence + stop_oid →
-  position opened & protected → closed clean ✅
-- caught a real bug live: 6-sig-fig stop px rejected ("Invalid TP/SL price");
-  fixed `round_px`, dangling position closed safely, re-tested green
-- proved agent safety model: agent CAN trade (update_leverage ok) but CANNOT move
-  funds (usd_class_transfer rejected, keyed to agent) — exactly as designed
-
-Tests: **48 green** (+13: reconcile matrix, store roundtrip, sizing, guards, scheduler).
-Commits pushed: Phase 2 `7759439`, Phase 3 `8e82fb8`.
+- **V3 locked + bot→V3 + entrypoint** (`97a4954`,`55ce69c`,`4b28b70`): final model =
+  V3 confluence H4 EMA20>EMA100, H1 EMA100 exit. Decider `check_h4_confluence` mirrors
+  `engine.simulate`; V3 parity byte-identical; `ems_live/run.py` (`once`/forever). Three
+  alt price-filter models built + rejected (`scripts/three_models.py`).
+- **Robustness check** (`docs/EMS_V3_H4_robustness_recap.md`): V3 H4 slow 50 vs 100 →
+  ROBUST (EV gap 4.2%, overlap 78.7%), locked 100.
+- **Madrid-timestamped V3 CSVs** (`5179be5`) for swap-cost analysis (funding still
+  unmodeled — open item).
+- **Bot Phases 2+3** (`7759439`,`8e82fb8`): state machine + reconcile, scheduler,
+  broker (market entry / resting stop / close), safety guards, stop-confirmed-or-flatten,
+  HL price rounding (5 sig figs), agent is trade-only (can't withdraw). Full testnet
+  lifecycle proven with real fake-money orders.
 
 ---
 
 ## Currently Working On
 
-Nothing mid-flight. Bot is **V3, parity-locked, autonomy-hardened** (per-tick
-reconcile + kill switch), Render blueprint saved, left in `dry_run=True` (safe).
-**All code for unattended testnet operation is done — remaining is the Render deploy
-(Next Steps, START AT STEP 4).** Account funded + configured:
+**Render deploy — mid-flight, resume at step 4.** Code 100% done; only the Render
+dashboard deploy remains. Last session reached the repo-select page but couldn't
+auto-drive Render's SPA (see Last Session Summary). Next session: use the
+watch-and-guide hybrid (or user runs the 5-click flow solo) with the values below.
+Bot stays `dry_run=True`. Account funded + configured:
 - Testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`
 - Testnet equity: **~999 mock USDC** (Unified Account — usable for perps directly)
 - Agent (API) wallet `ems-bot` authorized, BTC leverage 3x isolated
@@ -171,12 +103,18 @@ Render worker blueprint, entrypoint.
 ## Next Steps — START AT STEP 4 (steps 1–3 are DONE: V3, parity, autonomy code)
 
 **4. Deploy the Render worker (dry).** The blueprint is already in `render.yaml`.
-   - Render dashboard → **Blueprints** (or New + → Blueprint) → connect this repo →
-     it reads `render.yaml` and creates the **`ems-live-bot`** worker.
+   - **How to drive it:** Render's dashboard is a never-idle SPA — Claude-in-Chrome
+     DOM tools all time out, so do NOT try to auto-drive. Use the hybrid: Claude
+     watches via computer-use desktop screenshots and calls each click; USER clicks.
+     Or user just does the ~5 clicks solo. Fast path to the repo step:
+     navigate directly to `dashboard.render.com/select-repo?type=blueprint`.
+   - Steps: that page → **Connect** on `chillcharcontacto-cyber/backtest-api` → Render
+     reads `render.yaml`, shows `backtest-api` + new **`ems-live-bot`** worker.
    - Paste the two secrets it prompts for (`sync: false`):
-     **HL_MASTER_ADDRESS** = `0x18ce…6964`, **HL_AGENT_KEY** = the testnet agent key.
+     **HL_MASTER_ADDRESS** = `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`
+     **HL_AGENT_KEY** = the testnet agent key (in local `.env`).
    - Presets already set: HL_TESTNET=true, EMS_DRY_RUN=true, risk 20, kill-switch 3R,
-     state on `/data`. Apply → Deploy.
+     state on `/data`. Apply → Deploy. (Worker + disk = paid ~$7/mo.)
 
 **5. Watch logs** — confirm the `[run]` config line, then a tick each :00/:30
    (fetch → evaluate → "no signal"). Validates the unattended scheduler.

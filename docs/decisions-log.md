@@ -4,6 +4,21 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-16
+
+**Render dashboard cannot be auto-driven by Claude-in-Chrome — use watch-and-guide**
+The Render dashboard is a single-page app with persistent connections, so it never
+reaches `document_idle`. Every Claude-in-Chrome DOM/screenshot tool (`find`,
+`read_page`, `screenshot`, `form_input`) times out at 45s, and blind pixel-clicks
+can't be calibrated without an in-Chrome screenshot. computer-use desktop screenshots
+DO render the page (good for seeing), but Chrome is read-tier so computer-use cannot
+click. Decision: for Render (and similar never-idle SPAs), do NOT attempt full
+automation — Claude watches via desktop screenshots and the user performs the clicks.
+`navigate` (URL changes) still works, so jump straight to
+`dashboard.render.com/select-repo?type=blueprint` to skip the button clicks.
+
+---
+
 ## 2026-06-11
 
 **Per-tick exchange reconcile — the exchange is checked every tick, not just on boot**
