@@ -52,17 +52,19 @@ def build():
     testnet  = _bool(os.environ.get("HL_TESTNET"), True)
     dry_run  = _bool(os.environ.get("EMS_DRY_RUN"), True)  # SAFE default
     risk     = float(os.environ.get("EMS_RISK_USD", "20"))
-    max_dd_r = float(os.environ.get("EMS_MAX_DAILY_LOSS_R", "3"))
+    max_dd_r = float(os.environ.get("EMS_MAX_DAILY_LOSS_R", "0"))
+    max_dd_n = int(os.environ.get("EMS_MAX_DAILY_LOSSES", "10"))
     state_path = os.environ.get("EMS_STATE_PATH", "ems_live_state.json")
 
     cfg = LiveConfig(testnet=testnet, dry_run=dry_run, risk_usd=risk,
-                     max_daily_loss_r=max_dd_r, state_path=state_path)
+                     max_daily_loss_r=max_dd_r, max_daily_losses=max_dd_n,
+                     state_path=state_path)
     store = PositionStore(cfg.state_path)
     broker = LiveBroker(cfg, address=master, secret_key=agent)
 
     print(f"[run] testnet={cfg.testnet} dry_run={cfg.dry_run} risk_usd={cfg.risk_usd} "
           f"strategy={cfg.strategy_name} h4={cfg.h4_ema_fast}/{cfg.h4_ema_slow} "
-          f"max_daily_loss={cfg.max_daily_loss_r}R state={cfg.state_path} "
+          f"kill={cfg.max_daily_losses}losses/{cfg.max_daily_loss_r}R state={cfg.state_path} "
           f"agent={'yes' if agent else 'no (read-only)'}")
     return cfg, store, broker
 

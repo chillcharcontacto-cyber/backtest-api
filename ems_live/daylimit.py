@@ -17,6 +17,7 @@ class DayLedger:
     day:        str   = ""      # 'YYYY-MM-DD' UTC
     realized_r: float = 0.0     # cumulative realized R for `day`
     trades:     int   = 0       # closed trades counted today
+    losses:     int   = 0       # losing trades (r < 0) counted today
 
 
 class DayLedgerStore:
@@ -40,7 +41,7 @@ def roll(ledger: DayLedger, today: str) -> DayLedger:
     """Return a ledger for `today`, reset if the stored day differs."""
     if ledger.day == today:
         return ledger
-    return DayLedger(day=today, realized_r=0.0, trades=0)
+    return DayLedger(day=today, realized_r=0.0, trades=0, losses=0)
 
 
 def record(ledger: DayLedger, r: float, today: str) -> DayLedger:
@@ -48,15 +49,23 @@ def record(ledger: DayLedger, r: float, today: str) -> DayLedger:
     led = roll(ledger, today)
     led.realized_r += r
     led.trades += 1
+    if r < 0:
+        led.losses += 1
     return led
 
 
-def is_halted(ledger: DayLedger, today: str, max_daily_loss_r: float) -> bool:
+def is_halted(ledger: DayLedger, today: str,
+              max_daily_loss_r: float = 0.0,
+              max_daily_losses: int = 0) -> bool:
     """
-    True if today's cumulative realized R has hit the loss limit.
-    max_daily_loss_r <= 0 disables the kill switch.
+    Kill switch — halt new entries for the rest of the UTC day when EITHER limit
+    trips (each disabled when its value is <= 0):
+      - max_daily_losses : number of losing trades today
+      - max_daily_loss_r : cumulative realized R today
     """
-    if max_daily_loss_r <= 0:
-        return False
     led = roll(ledger, today)
-    return led.realized_r <= -abs(max_daily_loss_r)
+    if max_daily_losses > 0 and led.losses >= max_daily_losses:
+        return True
+    if max_daily_loss_r > 0 and led.realized_r <= -abs(max_daily_loss_r):
+        return True
+    return False

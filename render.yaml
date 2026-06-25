@@ -30,8 +30,10 @@ services:
         value: "true"             # SAFE: compute+log, no orders. Flip to "false" to ARM.
       - key: EMS_RISK_USD
         value: "20"
+      - key: EMS_MAX_DAILY_LOSSES
+        value: "10"               # halt after 10 losing trades in a UTC day
       - key: EMS_MAX_DAILY_LOSS_R
-        value: "3"
+        value: "0"                # R-based cap off (count-based is primary)
       - key: EMS_STATE_PATH
         value: /data/ems_live_state.json
       - key: HL_MASTER_ADDRESS

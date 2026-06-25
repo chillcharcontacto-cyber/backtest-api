@@ -248,14 +248,16 @@ def _record(cfg: LiveConfig, r: float, today: str, log=print):
     s = _ledger_store(cfg)
     led = ledger_record(s.load(), r, today)
     s.save(led)
-    log(f"  day P&L: {led.realized_r:+.2f}R over {led.trades} trade(s)  day={led.day}")
-    if is_halted(led, today, cfg.max_daily_loss_r):
-        log(f"  >>> DAILY LOSS LIMIT HIT ({led.realized_r:+.2f}R) — entries halted today")
+    log(f"  day P&L: {led.realized_r:+.2f}R  {led.losses} loss / {led.trades} trade(s)  day={led.day}")
+    if is_halted(led, today, cfg.max_daily_loss_r, cfg.max_daily_losses):
+        log(f"  >>> DAILY LOSS LIMIT HIT ({led.losses} losses, {led.realized_r:+.2f}R) "
+            f"— entries halted today")
     return led
 
 
 def _halted(cfg: LiveConfig, today: str) -> bool:
-    return is_halted(_ledger_store(cfg).load(), today, cfg.max_daily_loss_r)
+    return is_halted(_ledger_store(cfg).load(), today,
+                     cfg.max_daily_loss_r, cfg.max_daily_losses)
 
 
 # --------------------------------------------------------------------------- #
@@ -391,9 +393,15 @@ def run_forever(cfg: LiveConfig, store: PositionStore, broker, log=print):
     """Long-running loop for the Render worker. Reconciles, then ticks each bar."""
     import time
     log(f"=== EMS LIVE runner start — testnet={cfg.testnet} dry_run={cfg.dry_run} ===")
+    kill_bits = []
+    if cfg.max_daily_losses > 0:
+        kill_bits.append(f"{cfg.max_daily_losses} losses")
+    if cfg.max_daily_loss_r > 0:
+        kill_bits.append(f"{cfg.max_daily_loss_r}R")
+    kill_s = "/".join(kill_bits) or "off"
     notify.send_telegram(
         f"🚀 EMS-V3 bot started\ntestnet={cfg.testnet}  dry_run={cfg.dry_run}\n"
-        f"risk ${cfg.risk_usd}  kill {cfg.max_daily_loss_r}R  H4 {cfg.h4_ema_fast}/{cfg.h4_ema_slow}")
+        f"risk ${cfg.risk_usd}  kill {kill_s}/day  H4 {cfg.h4_ema_fast}/{cfg.h4_ema_slow}")
     boot_reconcile(cfg, store, broker, log)
     notify.ping_health()                  # liveness from boot
     while True:
