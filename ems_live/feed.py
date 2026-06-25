@@ -12,7 +12,9 @@ from typing import Optional
 import pandas as pd
 import requests
 
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+# Binance public market-data mirror — NOT geo-blocked (api.binance.com returns
+# HTTP 451 from US IPs like Render's). Same klines payload, no API key.
+BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 
 INTERVAL_MS = {"30m": 1_800_000, "1h": 3_600_000}
 
