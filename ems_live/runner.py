@@ -27,6 +27,7 @@ from .sl_adapter import adapt_sl_to_hl
 from .position import (PositionState, PositionStore, reconcile,
                        FLAT, IN_POSITION)
 from .daylimit import DayLedgerStore, record as ledger_record, is_halted
+from . import notify
 
 
 # --------------------------------------------------------------------------- #
@@ -118,19 +119,23 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         if not cfg.dry_run and broker is not None:
             if broker.open_position() is None:
                 log("  position gone on exchange (resting stop fired) — recording -1R")
-                _record(cfg, -1.0, today, log)
+                _notify_exit(cfg, broker, state, "STRUCTURAL_SL",
+                             state.sl_price, -1.00, t, today, log)
                 return store_flat(store)
         else:
             # dry: simulate intrabar stop hit on the bar low
             if check_sl_hit(ctx, i, state.sl_price):
                 log("  DRY_RUN: simulated SL hit -> -1R")
-                _record(cfg, -1.0, today, log)
+                _notify_exit(cfg, broker, state, "STRUCTURAL_SL",
+                             state.sl_price, -1.00, t, today, log)
                 return store_flat(store)
 
         # 2) H1 EMA100 exit
         ex = check_h1_exit(ctx, i, state.entry_price, state.sl_price)
         if ex is None:
             log("  in position — no exit this bar (stop resting on exchange)")
+            # H1-close update (at :30 M30 bars, when the H1 just closed)
+            _notify_inpos(cfg, ctx, i, state, t, log)
             return state
         log(f"  H1_EMA100 exit signal @ {ex.exit_price:.2f} (r={ex.r_multiple})")
         if cfg.dry_run:
@@ -142,18 +147,22 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
                     broker.cancel_order(state.stop_oid)
                 except Exception as e:
                     log(f"  (stop cancel after close failed, likely already gone: {e!r})")
-        _record(cfg, ex.r_multiple, today, log)
+        _notify_exit(cfg, broker, state, "H1_EMA100", ex.exit_price,
+                     ex.r_multiple, ex.exit_time, today, log)
         return store_flat(store)
 
     # ---------------- FLAT: check entry ----------------
     sig = check_entry(ctx, i, cfg)
     if sig is None:
         log("  flat — no entry signal")
+        _notify_status(cfg, ctx, i, m30, t, log)   # market follow-up while flat
         return state
 
     # kill switch — halt new entries once today's loss limit is hit
     if _halted(cfg, today):
         log(f"  KILL SWITCH active — daily loss limit reached, no entries today ({today})")
+        notify.send_telegram(notify.fmt_blocked(
+            "KILL SWITCH", f"daily loss limit hit, halted today ({today})"))
         return state
 
     # adapt SL to Hyperliquid candles over the Binance anchor range
@@ -162,6 +171,7 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
                                cfg.coin, cfg.hl_api_url)
     except RuntimeError as e:
         log(f"  ENTRY ABORTED — SL adaptation failed: {e}")
+        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"SL adaptation failed: {e}"))
         return state
 
     entry = sig.entry_price
@@ -169,11 +179,13 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         size = compute_size(entry, sl_hl, cfg.risk_usd)
     except ValueError as e:
         log(f"  ENTRY ABORTED — sizing error: {e}")
+        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"sizing error: {e}"))
         return state
 
     ok, reason = guard_order(entry, sl_hl, size, cfg)
     if not ok:
         log(f"  ENTRY REFUSED by guard: {reason}")
+        notify.send_telegram(notify.fmt_blocked("ENTRY REFUSED", reason))
         return state
 
     log(f"  ENTRY SIGNAL  entry~{entry:.2f}  binance_sl={sig.sl_price:.2f}  "
@@ -181,6 +193,8 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
 
     if cfg.dry_run:
         log("  DRY_RUN: would market_entry(size) then place_stop(hl_sl, size)")
+        notify.send_telegram("🟡 DRY_RUN entry signal\n"
+                             + notify.fmt_entry(t, entry, sl_hl, size, cfg.risk_usd, cfg.leverage))
         return state
 
     # --- LIVE ---
@@ -194,10 +208,13 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
     except Exception as e:
         log(f"  STOP PLACEMENT FAILED ({e!r}) — FLATTENING immediately")
         broker.market_close()
+        notify.send_telegram(notify.fmt_blocked("STOP FAILED → FLATTENED", repr(e)))
         return store_flat(store)
 
     if stop_oid == -1:
         log("  stop triggered on placement (price already through SL) — position closed")
+        notify.send_telegram(notify.fmt_blocked("STOP TRIGGERED ON PLACEMENT",
+                                                "price already through SL — closed"))
         return store_flat(store)
 
     new = PositionState(
@@ -208,6 +225,8 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
     )
     store.save(new)
     log(f"  POSITION OPEN  entry={actual_entry:.2f} stop={sl_hl:.2f} oid={stop_oid}")
+    notify.send_telegram(notify.fmt_entry(t, actual_entry, sl_hl, size,
+                                          cfg.risk_usd, cfg.leverage))
     return new
 
 
@@ -237,6 +256,85 @@ def _record(cfg: LiveConfig, r: float, today: str, log=print):
 
 def _halted(cfg: LiveConfig, today: str) -> bool:
     return is_halted(_ledger_store(cfg).load(), today, cfg.max_daily_loss_r)
+
+
+# --------------------------------------------------------------------------- #
+#  Telegram notifications                                                      #
+# --------------------------------------------------------------------------- #
+
+def _notify_exit(cfg, broker, state, reason, exit_px, r, exit_time, today, log):
+    """Record the closed trade in the day-ledger and push a Telegram EXIT card."""
+    led = _record(cfg, r, today, log)
+    pnl = r * cfg.risk_usd                      # fixed-$ risk -> $ = R * risk_usd
+    pct = None
+    if broker is not None:
+        try:
+            av = broker.account_value()
+            if av and av > 0:
+                pct = pnl / av * 100.0
+        except Exception:
+            pass
+    size = state.size or 0.0
+    entry = state.entry_price or 0.0
+    fees = cfg.taker_fee * (size * entry + size * exit_px)
+    try:
+        dur_h = (pd.Timestamp(exit_time) - pd.Timestamp(state.entry_time)).total_seconds() / 3600
+    except Exception:
+        dur_h = 0.0
+    notify.send_telegram(
+        notify.fmt_exit(reason, exit_px, r, pnl, pct, fees, dur_h, led.realized_r))
+    return led
+
+
+def _gather(ctx, i):
+    """EMA/price snapshot at bar i for the status + in-position cards. None if gaps."""
+    t = ctx.m30_times[i]
+    h1_open = t.floor("h") - ctx.one_hour
+    h1i = ctx.h1_time_idx.get(h1_open)
+    h4l = (t - ctx.four_hours).floor("4h")
+    h4i = ctx.h4_time_idx.get(h4l) if ctx.h4_time_idx is not None else None
+    if h1i is None or h4i is None:
+        return None
+    return {
+        "h1_close": ctx.h1_closes[h1i],
+        "h1_e50":   ctx.h1_ema_trend[h1i],
+        "h1_e100":  ctx.h1_ema_exit[h1i],
+        "h4_e20":   ctx.h4_ema_fast[h4i],
+        "h4_e100":  ctx.h4_ema_slow[h4i],
+    }
+
+
+def _notify_status(cfg, ctx, i, m30, t, log):
+    """Flat-state market follow-up (every tick) — EMA standings across timeframes."""
+    snap = _gather(ctx, i)
+    if snap is None:
+        return
+    try:
+        m30_e20 = float(m30["ema_fast"].iloc[-1])
+        m30_e50 = float(m30["ema_slow"].iloc[-1])
+        cross = bool(ctx.m30_cross[i - 1])
+    except Exception:
+        return
+    notify.send_telegram(notify.fmt_status(
+        t, m30_e20, m30_e50, cross, snap["h1_close"], snap["h1_e50"],
+        snap["h4_e20"], snap["h4_e100"]))
+
+
+def _notify_inpos(cfg, ctx, i, state, t, log):
+    """In-position update on each H1 close (:30 M30 bars) — distance to exit trigger."""
+    if t.minute != 30:
+        return
+    h1_open = t - ctx.thirty_min
+    idx = ctx.h1_time_idx.get(h1_open)
+    if idx is None:
+        return
+    h1_close = ctx.h1_closes[idx]
+    h1_e100 = ctx.h1_ema_exit[idx]
+    entry = state.entry_price or 0.0
+    sl = state.sl_price or 0.0
+    denom = entry - sl
+    r_now = (h1_close - entry) / denom if denom else 0.0
+    notify.send_telegram(notify.fmt_inpos(t, h1_close, entry, sl, r_now, h1_e100))
 
 
 # --------------------------------------------------------------------------- #
@@ -279,6 +377,9 @@ def run_forever(cfg: LiveConfig, store: PositionStore, broker, log=print):
     """Long-running loop for the Render worker. Reconciles, then ticks each bar."""
     import time
     log(f"=== EMS LIVE runner start — testnet={cfg.testnet} dry_run={cfg.dry_run} ===")
+    notify.send_telegram(
+        f"🚀 EMS-V3 bot started\ntestnet={cfg.testnet}  dry_run={cfg.dry_run}\n"
+        f"risk ${cfg.risk_usd}  kill {cfg.max_daily_loss_r}R  H4 {cfg.h4_ema_fast}/{cfg.h4_ema_slow}")
     boot_reconcile(cfg, store, broker, log)
     while True:
         now = pd.Timestamp.utcnow()
@@ -289,5 +390,8 @@ def run_forever(cfg: LiveConfig, store: PositionStore, broker, log=print):
         time.sleep(sleep_s)
         try:
             tick(cfg, store, broker, log)
+            notify.ping_health()          # liveness: tick completed OK
         except Exception as e:   # never let one bad tick kill the worker
             log(f"[ERROR] tick failed: {e!r}")
+            notify.ping_health("/fail")   # tell healthchecks this tick errored
+            notify.send_telegram(notify.fmt_blocked("TICK ERROR", repr(e)))

@@ -38,3 +38,10 @@ services:
         sync: false               # set in dashboard
       - key: HL_AGENT_KEY
         sync: false               # SECRET — set in dashboard, never commit
+      # --- monitoring (optional; each no-ops if unset) ---
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false               # from @BotFather
+      - key: TELEGRAM_CHAT_ID
+        sync: false               # your chat/channel id
+      - key: HEALTHCHECK_URL
+        sync: false               # healthchecks.io ping URL (dead-man's switch)

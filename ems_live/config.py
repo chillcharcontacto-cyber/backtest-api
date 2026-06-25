@@ -31,6 +31,7 @@ class LiveConfig:
 
     # --- sizing / risk ---
     risk_usd:       float = 20.0         # fixed $ risk per trade (change anytime)
+    taker_fee:      float = 0.00045      # HL perp base taker (~0.045%/side) for fee estimate
 
     # --- safety guards (orders refused if violated) ---
     max_notional_usd:   float = 500.0    # absolute ceiling on position notional
