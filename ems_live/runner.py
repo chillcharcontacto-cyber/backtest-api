@@ -263,26 +263,40 @@ def _halted(cfg: LiveConfig, today: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 def _notify_exit(cfg, broker, state, reason, exit_px, r, exit_time, today, log):
-    """Record the closed trade in the day-ledger and push a Telegram EXIT card."""
-    led = _record(cfg, r, today, log)
-    pnl = r * cfg.risk_usd                      # fixed-$ risk -> $ = R * risk_usd
+    """Record the closed trade in the day-ledger and push a Telegram EXIT card.
+
+    Deviation = how far the realized (after-fee) R lands from the model R, as a
+    percent of |model_r|. With fixed-$ risk, gross $ = model_r * risk_usd exactly,
+    so the only drift here is fees (slippage on real fills can be added later from
+    exchange data). Negative deviation = costs ate into the result.
+    """
+    led = _record(cfg, r, today, log)            # ledger keeps model R
+    size = state.size or 0.0
+    entry = state.entry_price or 0.0
+    fees = cfg.taker_fee * (size * entry + size * exit_px)
+
+    model_r = r
+    gross_pnl = model_r * cfg.risk_usd
+    net_pnl = gross_pnl - fees
+    net_r = net_pnl / cfg.risk_usd if cfg.risk_usd else 0.0
+    deviation = ((net_r - model_r) / abs(model_r) * 100.0) if model_r else 0.0
+
     pct = None
     if broker is not None:
         try:
             av = broker.account_value()
             if av and av > 0:
-                pct = pnl / av * 100.0
+                pct = net_pnl / av * 100.0
         except Exception:
             pass
-    size = state.size or 0.0
-    entry = state.entry_price or 0.0
-    fees = cfg.taker_fee * (size * entry + size * exit_px)
     try:
         dur_h = (pd.Timestamp(exit_time) - pd.Timestamp(state.entry_time)).total_seconds() / 3600
     except Exception:
         dur_h = 0.0
-    notify.send_telegram(
-        notify.fmt_exit(reason, exit_px, r, pnl, pct, fees, dur_h, led.realized_r))
+
+    notify.send_telegram(notify.fmt_exit(
+        reason, exit_px, model_r, net_r, net_pnl, pct, fees, deviation, dur_h,
+        led.realized_r))
     return led
 
 

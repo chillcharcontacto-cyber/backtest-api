@@ -59,12 +59,20 @@ def fmt_entry(t, entry, sl, size, risk_usd, leverage) -> str:
             f"notional ${notional:,.0f}  lev {leverage}x")
 
 
-def fmt_exit(reason, exit_px, r, pnl_usd, pct, fees_usd, dur_h, day_r) -> str:
+def fmt_exit(reason, exit_px, model_r, net_r, net_pnl, pct, fees_usd,
+             deviation_pct, dur_h, day_r) -> str:
+    """
+    model_r     : clean R from price levels (fees/slippage ignored)
+    net_r       : realized R after fees  (= model_r - fees/risk_usd)
+    deviation_pct: how far net moved from model due to costs, as % of |model_r|
+                   (negative = costs ate into the result; the usual case)
+    """
     emoji = "🔻" if reason == "STRUCTURAL_SL" else "🔴"
     pct_s = f"{pct:+.2f}%" if pct is not None else "n/a"
     return (f"{emoji} EXIT ({reason})\n"
-            f"exit {exit_px:,.1f}  R {r:+.2f}\n"
-            f"P&L {pnl_usd:+,.2f}$  {pct_s}\n"
+            f"exit {exit_px:,.1f}\n"
+            f"R {model_r:+.2f} → net {net_r:+.2f}  (dev {deviation_pct:+.1f}%)\n"
+            f"net P&L {net_pnl:+,.2f}$  {pct_s}\n"
             f"fees ~${fees_usd:.2f}  dur {dur_h:.0f}h\n"
             f"day: {day_r:+.2f}R")
 

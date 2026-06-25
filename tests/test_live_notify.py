@@ -13,21 +13,27 @@ def test_fmt_entry_has_key_fields():
     assert "399" in s
 
 
-def test_fmt_exit_tp_and_sl_emojis():
-    tp = notify.fmt_exit("H1_EMA100", 67210.0, 2.16, 43.2, 0.43, 0.72, 14, 1.16)
+def test_fmt_exit_tp_with_deviation():
+    # model +2.16, net +2.07 after fees -> dev -4.2%
+    tp = notify.fmt_exit("H1_EMA100", 67210.0, 2.16, 2.07, 41.4, 0.41, 1.8, -4.2, 14, 1.16)
     assert "🔴" in tp and "H1_EMA100" in tp
-    assert "R +2.16" in tp
-    assert "+43.20$" in tp and "+0.43%" in tp
+    assert "R +2.16 → net +2.07" in tp
+    assert "dev -4.2%" in tp
+    assert "+41.40$" in tp and "+0.41%" in tp
     assert "day: +1.16R" in tp
 
-    sl = notify.fmt_exit("STRUCTURAL_SL", 64610.0, -1.0, -20.0, -0.20, 0.6, 1, -1.0)
+
+def test_fmt_exit_sl_with_deviation():
+    # user's example: model -1.0, net -1.1 ($-22), dev -10%
+    sl = notify.fmt_exit("STRUCTURAL_SL", 64610.0, -1.0, -1.1, -22.0, -0.22, 2.0, -10.0, 1, -1.0)
     assert "🔻" in sl
-    assert "R -1.00" in sl
-    assert "-20.00$" in sl
+    assert "R -1.00 → net -1.10" in sl
+    assert "dev -10.0%" in sl
+    assert "-22.00$" in sl
 
 
 def test_fmt_exit_pct_none():
-    s = notify.fmt_exit("H1_EMA100", 67000.0, 1.0, 20.0, None, 0.5, 5, 1.0)
+    s = notify.fmt_exit("H1_EMA100", 67000.0, 1.0, 0.95, 19.0, None, 1.0, -5.0, 5, 1.0)
     assert "n/a" in s
 
 
