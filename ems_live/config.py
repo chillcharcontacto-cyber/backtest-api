@@ -43,6 +43,7 @@ class LiveConfig:
 
     # --- scheduler ---
     poll_buffer_sec:    int   = 15       # wait this long after bar close before fetching
+    heartbeat_sec:      int   = 60       # liveness ping cadence between bars (hang detection)
 
     # --- venue ---
     testnet:        bool  = True         # ALWAYS start true; flip only when proven

@@ -381,17 +381,28 @@ def run_forever(cfg: LiveConfig, store: PositionStore, broker, log=print):
         f"🚀 EMS-V3 bot started\ntestnet={cfg.testnet}  dry_run={cfg.dry_run}\n"
         f"risk ${cfg.risk_usd}  kill {cfg.max_daily_loss_r}R  H4 {cfg.h4_ema_fast}/{cfg.h4_ema_slow}")
     boot_reconcile(cfg, store, broker, log)
+    notify.ping_health()                  # liveness from boot
     while True:
         now = pd.Timestamp.utcnow()
         if now.tzinfo is None:
             now = now.tz_localize("UTC")
         sleep_s = seconds_until_next_bar(now, cfg.poll_buffer_sec)
         log(f"[sleep] {sleep_s:.0f}s until next bar")
-        time.sleep(sleep_s)
+
+        # Sleep in heartbeat-sized chunks, pinging each chunk so healthchecks
+        # knows the process is alive even between 30-min bars (hang detection).
+        remaining = sleep_s
+        while remaining > 0:
+            chunk = min(cfg.heartbeat_sec, remaining)
+            time.sleep(chunk)
+            notify.ping_health()          # heartbeat (silent; no log)
+            remaining -= chunk
+
         try:
             tick(cfg, store, broker, log)
             notify.ping_health()          # liveness: tick completed OK
         except Exception as e:   # never let one bad tick kill the worker
+            # process is still alive (heartbeat continues) — surface the logic
+            # error via Telegram; do NOT mark healthchecks down for a retryable tick.
             log(f"[ERROR] tick failed: {e!r}")
-            notify.ping_health("/fail")   # tell healthchecks this tick errored
             notify.send_telegram(notify.fmt_blocked("TICK ERROR", repr(e)))
