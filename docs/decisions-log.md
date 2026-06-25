@@ -4,6 +4,43 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-25
+
+**Bot deployed LIVE on Render (testnet, dry_run); monitoring is mandatory before arming**
+The EMS-V3 bot now runs autonomously on a Render worker. Monitoring shipped alongside,
+not after: Telegram event cards (entry/exit/status/blocked) + healthchecks.io liveness.
+Rationale proven same day — the Binance-451 production bug surfaced on the phone in
+seconds via the new Telegram alerting instead of failing silently.
+
+**Live feed uses data-api.binance.vision, not api.binance.com (Render US IP → 451)**
+`api.binance.com` geo-blocks US IPs (Render) with HTTP 451. The live feed (`ems_live/
+feed.py`) switched to Binance's public market-data mirror `data-api.binance.vision`
+(same klines, no geo-block, no key). The backtest fetcher (`ems/data.py`) stays on
+api.binance.com since it runs from the user's own IP.
+
+**Kill switch is count-based (10 losing trades/day), not R-based**
+The R-based daily cap (3R) tripped on normal variance for this low-WR (~23%), streaky
+strategy (backtest longest losing streak 14–17) and would clip the tested edge. Switched
+the default to a losing-trade count (10/day, ≈ −10R worst case) which only catches a
+genuinely abnormal day. Either limit can be set via env; R-based now defaults off.
+Reminder logged in handoff: the backtest had NO kill switch — this is a live-only
+safety overlay, so live can diverge from backtested results on extreme days.
+
+**EXIT reporting separates model R from net R (cost deviation)**
+Each close reports the clean model R, the after-fee net R, and the deviation % (how far
+costs moved the result). With fixed-$ risk, gross $ = model_r × risk_usd exactly, so
+deviation currently isolates fee drag (bigger on tight stops = more notional per 1R);
+slippage from real fills is a parked enhancement.
+
+**Liveness = minute heartbeat + Render native alerts (two failure modes)**
+Crash/exit → Render's native notifications (instant) + auto-restart. Hang (alive but
+frozen) → only a heartbeat catches it, so the loop pings healthchecks every 60s
+(healthchecks Period 1m/Grace 2m → ~3-min detection). Heartbeat is silent (no log
+spam) and never touches trading logic. Tick errors go to Telegram, NOT marked as
+healthchecks-down (process is alive and will retry).
+
+---
+
 ## 2026-06-16
 
 **Render dashboard cannot be auto-driven by Claude-in-Chrome — use watch-and-guide**
