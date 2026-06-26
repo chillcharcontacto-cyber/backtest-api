@@ -13,6 +13,8 @@ SAFETY: every order path goes through guard_order(). In dry_run (default) NO ord
 methods are called at all — the bot computes and logs the intended action. Phase 3
 implements broker order methods and flips dry_run=False on testnet first.
 """
+import json
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -320,8 +322,39 @@ def _gather(ctx, i):
     }
 
 
+def _gate_store_path(cfg) -> str:
+    return cfg.state_path + ".status"
+
+
+def _load_gate(cfg):
+    p = _gate_store_path(cfg)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _save_gate(cfg, gate):
+    p = _gate_store_path(cfg)
+    try:
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(gate, f)
+        os.replace(p + ".tmp", p)
+    except Exception:
+        pass
+
+
 def _notify_status(cfg, ctx, i, m30, t, log):
-    """Flat-state market follow-up (every tick) — EMA standings across timeframes."""
+    """
+    Flat-state market follow-up. In status_mode='change' (default) a card is sent
+    ONLY when a gate flips (M30 bull, H1 above ema50, H4 allows) — no 30-min flood.
+    """
+    mode = getattr(cfg, "status_mode", "change")
+    if mode == "off":
+        return
     snap = _gather(ctx, i)
     if snap is None:
         return
@@ -331,7 +364,19 @@ def _notify_status(cfg, ctx, i, m30, t, log):
         cross = bool(ctx.m30_cross[i - 1])
     except Exception:
         return
-    notify.send_telegram(notify.fmt_status(
+
+    gate = {
+        "m30": int(m30_e20 > m30_e50),
+        "h1":  int(snap["h1_close"] > snap["h1_e50"]),
+        "h4":  int(snap["h4_e20"] > snap["h4_e100"]),
+    }
+    last = _load_gate(cfg) if mode == "change" else None
+    send, prefix = notify.status_decision(last, gate, mode)
+    if mode == "change":
+        _save_gate(cfg, gate)       # always remember the latest, even if unchanged
+    if not send:
+        return
+    notify.send_telegram(prefix + notify.fmt_status(
         t, m30_e20, m30_e50, cross, snap["h1_close"], snap["h1_e50"],
         snap["h4_e20"], snap["h4_e100"]))
 

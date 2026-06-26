@@ -94,6 +94,30 @@ def fmt_status(t, m30_e20, m30_e50, cross, h1_close, h1_e50,
             f"H4  ema20 {h4_e20:,.0f}/ema100 {h4_e100:,.0f} {h4_dir} long")
 
 
+def status_decision(last_gate, gate, mode):
+    """
+    Decide whether to send a FLAT status card and an optional change-prefix.
+    gate / last_gate = {"m30":0/1, "h1":0/1, "h4":0/1} (1 = bullish/allows).
+    mode: "off" (never) | "always" (every tick) | "change" (only when a gate flips).
+    Returns (send: bool, prefix: str).
+    """
+    if mode == "off":
+        return False, ""
+    if mode == "always":
+        return True, ""
+    # change mode
+    if last_gate == gate:
+        return False, ""
+    prefix = ""
+    if last_gate is not None:
+        flips = [f"{label} {'▲' if gate[k] else '▽'}"
+                 for k, label in (("m30", "M30"), ("h1", "H1"), ("h4", "H4"))
+                 if last_gate.get(k) != gate[k]]
+        if flips:
+            prefix = "Δ " + ", ".join(flips) + "\n"
+    return True, prefix
+
+
 def fmt_inpos(t, h1_close, entry, sl, r_now, h1_e100) -> str:
     dist = h1_close - h1_e100
     return (f"🔵 IN POS  {t}\n"

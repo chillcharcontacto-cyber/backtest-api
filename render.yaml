@@ -34,6 +34,8 @@ services:
         value: "10"               # halt after 10 losing trades in a UTC day
       - key: EMS_MAX_DAILY_LOSS_R
         value: "0"                # R-based cap off (count-based is primary)
+      - key: EMS_STATUS_MODE
+        value: "change"           # FLAT card only on gate flips (not every 30m)
       - key: EMS_STATE_PATH
         value: /data/ems_live_state.json
       - key: HL_MASTER_ADDRESS

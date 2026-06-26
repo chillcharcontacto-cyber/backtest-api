@@ -53,6 +53,9 @@ class LiveConfig:
     lookback_m30:   int   = 1200         # >= 500 needed for EMA50 to converge
     lookback_h1:    int   = 800          # >= 200 needed for EMA100 to converge
 
+    # --- monitoring ---
+    status_mode:    str   = "change"     # FLAT card: "change" (on gate flip) | "always" | "off"
+
     # --- persistence / labels ---
     state_path:     str   = "ems_live_state.json"
     strategy_name:  str   = "EMA-Cross-H4F"

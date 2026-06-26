@@ -59,6 +59,33 @@ def test_fmt_inpos_distance():
     assert "-150 away" in s
 
 
+def test_status_decision_off_and_always():
+    g = {"m30": 1, "h1": 0, "h4": 0}
+    assert notify.status_decision(None, g, "off") == (False, "")
+    assert notify.status_decision(g, g, "always") == (True, "")
+
+
+def test_status_decision_change_suppresses_unchanged():
+    g = {"m30": 1, "h1": 0, "h4": 0}
+    send, prefix = notify.status_decision(g, g, "change")
+    assert send is False
+
+
+def test_status_decision_change_fires_on_flip_with_prefix():
+    last = {"m30": 0, "h1": 0, "h4": 0}
+    now = {"m30": 1, "h1": 0, "h4": 1}     # M30 + H4 flipped up
+    send, prefix = notify.status_decision(last, now, "change")
+    assert send is True
+    assert "M30 ▲" in prefix and "H4 ▲" in prefix
+    assert "H1" not in prefix               # H1 unchanged -> not listed
+
+
+def test_status_decision_change_first_time_no_prefix():
+    now = {"m30": 1, "h1": 0, "h4": 0}
+    send, prefix = notify.status_decision(None, now, "change")
+    assert send is True and prefix == ""    # first reading: send, no Δ line
+
+
 def test_senders_noop_without_env(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
