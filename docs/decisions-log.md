@@ -4,6 +4,18 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-06-26
+
+**FLAT status card is event-driven (on gate flip), not time-driven**
+The ⚪ FLAT card was sent every tick (48/day) — pure noise. Changed to `status_mode`
+(default `change`): send only when a gate's boolean flips (M30 ema20>ema50, H1 close>
+ema50, H4 ema20>ema100), with a `Δ` line naming the flip. The last gate-state persists
+to a `<state>.status` sidecar so change is detected across the stateless-per-tick loop.
+A card is only useful when the market actually moves a gate (setup building/breaking);
+otherwise stay silent. Modes `change`/`always`/`off` via `EMS_STATUS_MODE`.
+
+---
+
 ## 2026-06-25
 
 **Bot deployed LIVE on Render (testnet, dry_run); monitoring is mandatory before arming**

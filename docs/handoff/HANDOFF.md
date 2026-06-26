@@ -1,6 +1,23 @@
 # Handoff
 
-## Last Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
+## Last Session Summary — FLAT card noise fix + strategy clarification
+
+Small session on the live bot (already deployed + soaking).
+- **FLAT card on gate-change only** (`36f5c36`) — the ⚪ FLAT status card was flooding
+  Telegram every 30 min (48/day). Added `status_mode` (`EMS_STATUS_MODE`, default
+  `change`): the card now sends ONLY when a gate flips (M30 bull, H1 vs ema50, H4
+  allows), with a `Δ …` line naming what flipped. Last gate persisted to
+  `<state>.status`; first card after boot fires once, then silent. Modes:
+  `change` | `always` | `off`. 71 tests green.
+- **Strategy mechanics clarified** (no code) — V3 entry = **1 trigger + 2 filters**:
+  the M30 EMA20/50 bullish **cross is the trigger (event)**; H1 (close > ema50) and H4
+  (ema20 > ema100) are **standing permission gates**. After H4 confirms (it lags,
+  flips last), entry needs the next **fresh M30 cross** (a small M30 dip-and-recross) —
+  NOT an H1 bear/bull cycle. Filters gate, the M30 cross fires.
+
+---
+
+## Previous Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
 
 The EMS-V3 bot is now **running autonomously on Render** (testnet, `dry_run=True`,
 no orders). Drove the Blueprint deploy via watch-and-guide (Claude sees via
