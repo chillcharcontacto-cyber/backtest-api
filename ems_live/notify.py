@@ -118,6 +118,49 @@ def status_decision(last_gate, gate, mode):
     return True, prefix
 
 
+def _arrow(b):
+    return "▲" if b else "▽"
+
+
+def stage_of(h4: bool, h1: bool) -> int:
+    """
+    Setup ladder stage (top-down). M30 is the trigger inside stage 2, not its own stage.
+      0 = H4 bearish (blocked at the top)
+      1 = H4 bullish, H1 bearish (waiting on H1)
+      2 = H4 + H1 bullish (armed, waiting for a fresh M30 cross)
+    """
+    if not h4:
+        return 0
+    if not h1:
+        return 1
+    return 2
+
+
+def steps_plan(last_stage, hb_day, stage, today):
+    """Pure: (send_daily_heartbeat, send_stage_change)."""
+    return (hb_day != today, last_stage != stage)
+
+
+def fmt_stage(stage, h4, h1, m30) -> str:
+    if stage == 0:
+        return (f"🔴 H4 bearish — longs blocked. Standing down.\n"
+                f"H4 {_arrow(h4)}  (will ping when H4 flips bullish)")
+    if stage == 1:
+        return (f"🟠 Step 1/3 — H4 bullish ✅\n"
+                f"H4 {_arrow(h4)} · H1 {_arrow(h1)} · M30 {_arrow(m30)}\n"
+                f"Now waiting on H1 (close > ema50).")
+    return (f"🟡 Step 2/3 — H4 ✅ + H1 ✅ — ARMED\n"
+            f"H4 {_arrow(h4)} · H1 {_arrow(h1)} · M30 {_arrow(m30)}\n"
+            f"Waiting for a fresh M30 cross → 🟢 entry.")
+
+
+def fmt_heartbeat(h4, h1, m30) -> str:
+    bull = lambda b: "▲ bull" if b else "▽ bear"
+    return ("😴 Still alive, waiting for an entry.\n"
+            f"H4 {bull(h4)} · H1 {bull(h1)} · M30 {bull(m30)}\n"
+            "Nothing to do — will ping on the next step.")
+
+
 def fmt_inpos(t, h1_close, entry, sl, r_now, h1_e100) -> str:
     dist = h1_close - h1_e100
     return (f"🔵 IN POS  {t}\n"

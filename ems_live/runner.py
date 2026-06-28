@@ -322,26 +322,26 @@ def _gather(ctx, i):
     }
 
 
-def _gate_store_path(cfg) -> str:
+def _status_store_path(cfg) -> str:
     return cfg.state_path + ".status"
 
 
-def _load_gate(cfg):
-    p = _gate_store_path(cfg)
+def _load_status(cfg) -> dict:
+    p = _status_store_path(cfg)
     if not os.path.exists(p):
-        return None
+        return {}
     try:
         with open(p, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return None
+        return {}
 
 
-def _save_gate(cfg, gate):
-    p = _gate_store_path(cfg)
+def _save_status(cfg, data: dict):
+    p = _status_store_path(cfg)
     try:
         with open(p + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(gate, f)
+            json.dump(data, f)
         os.replace(p + ".tmp", p)
     except Exception:
         pass
@@ -349,10 +349,16 @@ def _save_gate(cfg, gate):
 
 def _notify_status(cfg, ctx, i, m30, t, log):
     """
-    Flat-state market follow-up. In status_mode='change' (default) a card is sent
-    ONLY when a gate flips (M30 bull, H1 above ema50, H4 allows) — no 30-min flood.
+    Flat-state notifications.
+
+    status_mode='steps' (default): top-down ladder H4 -> H1 -> M30. A step message
+    is sent only when the setup STAGE changes (so lower-TF noise stays silent while a
+    higher TF blocks), plus one daily 'still alive' heartbeat. Stage:
+      0 H4 bearish (blocked) · 1 H4 ok/waiting H1 · 2 armed/waiting M30 cross.
+    status_mode='change'/'always': legacy per-flip / per-tick FLAT card.
+    status_mode='off': nothing.
     """
-    mode = getattr(cfg, "status_mode", "change")
+    mode = getattr(cfg, "status_mode", "steps")
     if mode == "off":
         return
     snap = _gather(ctx, i)
@@ -365,15 +371,29 @@ def _notify_status(cfg, ctx, i, m30, t, log):
     except Exception:
         return
 
-    gate = {
-        "m30": int(m30_e20 > m30_e50),
-        "h1":  int(snap["h1_close"] > snap["h1_e50"]),
-        "h4":  int(snap["h4_e20"] > snap["h4_e100"]),
-    }
-    last = _load_gate(cfg) if mode == "change" else None
+    h4 = snap["h4_e20"] > snap["h4_e100"]
+    h1 = snap["h1_close"] > snap["h1_e50"]
+    m30b = m30_e20 > m30_e50
+    today = str(t.date())
+    data = _load_status(cfg)
+
+    if mode == "steps":
+        stage = notify.stage_of(h4, h1)
+        send_hb, send_stage = notify.steps_plan(
+            data.get("stage"), data.get("hb_day"), stage, today)
+        _save_status(cfg, {**data, "stage": stage, "hb_day": today})
+        if send_hb:
+            notify.send_telegram(notify.fmt_heartbeat(h4, h1, m30b))
+        if send_stage:
+            notify.send_telegram(notify.fmt_stage(stage, h4, h1, m30b))
+        return
+
+    # legacy change / always
+    gate = {"m30": int(m30b), "h1": int(h1), "h4": int(h4)}
+    last = data.get("gate") if mode == "change" else None
     send, prefix = notify.status_decision(last, gate, mode)
     if mode == "change":
-        _save_gate(cfg, gate)       # always remember the latest, even if unchanged
+        _save_status(cfg, {**data, "gate": gate})
     if not send:
         return
     notify.send_telegram(prefix + notify.fmt_status(

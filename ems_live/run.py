@@ -54,7 +54,7 @@ def build():
     risk     = float(os.environ.get("EMS_RISK_USD", "20"))
     max_dd_r = float(os.environ.get("EMS_MAX_DAILY_LOSS_R", "0"))
     max_dd_n = int(os.environ.get("EMS_MAX_DAILY_LOSSES", "10"))
-    status_mode = os.environ.get("EMS_STATUS_MODE", "change")
+    status_mode = os.environ.get("EMS_STATUS_MODE", "steps")
     state_path = os.environ.get("EMS_STATE_PATH", "ems_live_state.json")
 
     cfg = LiveConfig(testnet=testnet, dry_run=dry_run, risk_usd=risk,

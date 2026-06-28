@@ -86,6 +86,38 @@ def test_status_decision_change_first_time_no_prefix():
     assert send is True and prefix == ""    # first reading: send, no Δ line
 
 
+def test_stage_of_ladder():
+    assert notify.stage_of(h4=False, h1=True) == 0    # H4 blocks regardless of H1
+    assert notify.stage_of(h4=False, h1=False) == 0
+    assert notify.stage_of(h4=True, h1=False) == 1     # H4 ok, waiting H1
+    assert notify.stage_of(h4=True, h1=True) == 2      # armed
+
+
+def test_steps_plan_heartbeat_and_stage():
+    # new day + stage change -> both fire
+    assert notify.steps_plan(0, "2026-06-25", 1, "2026-06-26") == (True, True)
+    # same day, same stage -> nothing
+    assert notify.steps_plan(1, "2026-06-26", 1, "2026-06-26") == (False, False)
+    # same day, stage changed -> only stage
+    assert notify.steps_plan(0, "2026-06-26", 1, "2026-06-26") == (False, True)
+    # new day, same stage -> only heartbeat
+    assert notify.steps_plan(1, "2026-06-25", 1, "2026-06-26") == (True, False)
+    # first ever (None) -> both
+    assert notify.steps_plan(None, None, 0, "2026-06-26") == (True, True)
+
+
+def test_fmt_stage_messages():
+    assert "blocked" in notify.fmt_stage(0, False, True, True)
+    assert "Step 1/3" in notify.fmt_stage(1, True, False, True)
+    assert "ARMED" in notify.fmt_stage(2, True, True, True)
+
+
+def test_fmt_heartbeat_shows_all_tfs():
+    s = notify.fmt_heartbeat(False, True, False)
+    assert "Still alive" in s
+    assert "H4 ▽ bear" in s and "H1 ▲ bull" in s and "M30 ▽ bear" in s
+
+
 def test_senders_noop_without_env(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)

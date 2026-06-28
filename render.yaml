@@ -35,7 +35,7 @@ services:
       - key: EMS_MAX_DAILY_LOSS_R
         value: "0"                # R-based cap off (count-based is primary)
       - key: EMS_STATUS_MODE
-        value: "change"           # FLAT card only on gate flips (not every 30m)
+        value: "steps"            # H4→H1→M30 ladder + daily heartbeat (step-by-step)
       - key: EMS_STATE_PATH
         value: /data/ems_live_state.json
       - key: HL_MASTER_ADDRESS

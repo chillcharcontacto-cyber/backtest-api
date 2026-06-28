@@ -54,7 +54,7 @@ class LiveConfig:
     lookback_h1:    int   = 800          # >= 200 needed for EMA100 to converge
 
     # --- monitoring ---
-    status_mode:    str   = "change"     # FLAT card: "change" (on gate flip) | "always" | "off"
+    status_mode:    str   = "steps"      # "steps" (H4→H1→M30 ladder + daily heartbeat) | "change" | "always" | "off"
 
     # --- persistence / labels ---
     state_path:     str   = "ems_live_state.json"
