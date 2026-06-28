@@ -4,7 +4,18 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
-## 2026-06-26
+## 2026-06-27
+
+**Status notifications follow the setup hierarchy (H4→H1→M30 ladder), not raw flips**
+Reporting every gate flip still surfaced lower-timeframe noise while a higher TF was
+blocking longs. Changed the default to `status_mode=steps`: a "stage" is computed
+top-down (0 H4 bearish/blocked, 1 H4 ok/waiting H1, 2 armed/waiting M30 cross) and a
+step message is sent only when the STAGE changes. So while H4 is bearish, H1/M30 churn
+is silent; the bot only pings as the setup actually climbs (or regresses) the ladder,
+ending in the 🟢 entry. Rationale: a notification is only useful if it moves you closer
+to (or further from) an entry given the higher timeframes. Plus a once-per-UTC-day
+"still alive" heartbeat so multi-day flat stretches still confirm liveness on Telegram.
+Supersedes the prior `change` mode (kept as an option). Persisted to `<state>.status`.
 
 **FLAT status card is event-driven (on gate flip), not time-driven**
 The ⚪ FLAT card was sent every tick (48/day) — pure noise. Changed to `status_mode`

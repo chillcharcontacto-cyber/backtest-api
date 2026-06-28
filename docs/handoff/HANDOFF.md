@@ -1,19 +1,24 @@
 # Handoff
 
-## Last Session Summary — FLAT card noise fix + strategy clarification
+## Last Session Summary — step-by-step ladder notifications + daily heartbeat
 
-Small session on the live bot (already deployed + soaking).
-- **FLAT card on gate-change only** (`36f5c36`) — the ⚪ FLAT status card was flooding
-  Telegram every 30 min (48/day). Added `status_mode` (`EMS_STATUS_MODE`, default
-  `change`): the card now sends ONLY when a gate flips (M30 bull, H1 vs ema50, H4
-  allows), with a `Δ …` line naming what flipped. Last gate persisted to
-  `<state>.status`; first card after boot fires once, then silent. Modes:
-  `change` | `always` | `off`. 71 tests green.
+Telegram-notification UX work on the live bot (already deployed + soaking).
+- **Step-by-step ladder** (`fdfe51b`, new default `EMS_STATUS_MODE=steps`) — top-down
+  H4→H1→M30. A step message fires only when the setup STAGE changes, so lower-TF noise
+  stays silent while a higher TF blocks:
+    - stage 0 = H4 bearish (blocked) → silent on H1/M30
+    - stage 1 = H4 bullish, waiting H1 → 🟠 "Step 1/3"
+    - stage 2 = H4+H1 bullish, armed, waiting fresh M30 cross → 🟡 "Step 2/3"
+    - M30 cross → 🟢 ENTRY. Regressions ping too (H4→bearish = 🔴 standing down).
+  Plus a once-per-day 😴 "still alive" heartbeat showing H4/H1/M30 even during
+  multi-day dead-flat stretches. Stage + last-heartbeat-day persist to `<state>.status`.
+- Superseded the prior same-thread `change` mode (`36f5c36`, FLAT card only on any gate
+  flip) — `steps` is the new default; `change`/`always`/`off` still available.
 - **Strategy mechanics clarified** (no code) — V3 entry = **1 trigger + 2 filters**:
-  the M30 EMA20/50 bullish **cross is the trigger (event)**; H1 (close > ema50) and H4
-  (ema20 > ema100) are **standing permission gates**. After H4 confirms (it lags,
-  flips last), entry needs the next **fresh M30 cross** (a small M30 dip-and-recross) —
-  NOT an H1 bear/bull cycle. Filters gate, the M30 cross fires.
+  M30 EMA20/50 bullish **cross = trigger (event)**; H1 (close>ema50) and H4
+  (ema20>ema100) = **standing gates**. After H4 confirms (lags, flips last), entry needs
+  the next **fresh M30 cross** (small M30 dip-and-recross), NOT an H1 bear/bull cycle.
+- 75 tests green. Bot still LIVE on testnet, dry_run, soaking.
 
 ---
 
@@ -114,10 +119,16 @@ count-based kill switch, per-tick reconcile, entrypoint, unbuffered logs, 451 fi
 
 ## Next Steps — bot is LIVE on testnet; now SOAK then mainnet
 
-1. **Soak (now, passive).** Let it run dry on testnet. Watch Telegram for ⚪ FLAT
-   cards each :30, and the first 🟢 ENTRY → 🔵 in-pos → 🔴/🔻 EXIT cycle when the 3
-   gates align. Cross-check that cycle against the Hyperliquid testnet UI (Positions /
-   Trade History / Funding History). Goal: ≥1 real autonomous trade end-to-end.
+⭐ **USER REMINDER (next session):** start tracking the EMS indicator on **GU (GBP/USD)
+from Jan 5th** onward, and keep tracking the indicator. (User's words: "get it from
+jan 5th on GU and keep tracking the indicator" — clarify exact intent: forward-track
+the live indicator on GBPUSD, and/or backtest GBPUSD from 2026-01-05.)
+
+1. **Soak (now, passive).** Let it run dry on testnet. Watch Telegram for the
+   step-by-step ladder (🟠/🟡 step cards on gate flips, daily 😴 heartbeat), and the
+   first 🟢 ENTRY → 🔵 in-pos → 🔴/🔻 EXIT cycle when the 3 gates align. Cross-check
+   that cycle against the Hyperliquid testnet UI (Positions / Trade History / Funding
+   History). Goal: ≥1 real autonomous trade end-to-end.
 2. **ARM testnet** — when you trust it, worker → Environment → `EMS_DRY_RUN=false` →
    Save. Real testnet orders fire on the next aligned signal.
 3. **Mainnet prep** — fix capital first: 9.8 USDC can't support risk $20; deposit more
@@ -126,14 +137,5 @@ count-based kill switch, per-tick reconcile, entrypoint, unbuffered logs, 451 fi
 4. **Phase 5 mainnet** — flip HL_TESTNET=false, transfer real USDC spot→perp in the UI,
    one mainnet dry-run, then arm.
 
-Verify after any redeploy: 🚀 card reads `kill 10 losses/day`; ⚪ cards have real data
-(no TICK ERROR).
-
-**8. Verify first autonomous trade** — check entry + resting stop on the testnet UI.
-
-**Later — Phase 5 mainnet:** only after a clean multi-day armed testnet soak. Flip
-HL_TESTNET=false, transfer real USDC spot→perp in the UI (master-signed; agent can't),
-tiny risk_usd, one mainnet dry-run, then arm live.
-
-Heads-up: Render worker + persistent disk is **paid** (~$7/mo). Optional: run
-`python -m ems_live.run` locally first to watch it live before paying.
+Verify after any redeploy: 🚀 card reads `kill 10 losses/day`; step/heartbeat cards
+have real data (no TICK ERROR).
