@@ -224,6 +224,74 @@ def check_entry(ctx: Ctx, i: int, cfg) -> Optional[EntrySignal]:
     )
 
 
+def check_entry_live(ctx: Ctx, i: int, cfg, interval) -> Optional[EntrySignal]:
+    """
+    LIVE entry timing. The backtest enters at open[i] when the crossover is on bar
+    i-1. Live acts on CLOSED bars, so at the tick right after the CROSSOVER bar
+    closes (that bar = the latest closed bar, index i), the bot must enter at market
+    immediately — which is ~open[i+1] ~ close[i], the SAME price/instant the backtest
+    uses. This is one M30 bar EARLIER than checking cross[i-1] would fire.
+
+    So the crossover is on bar i (the just-closed bar); the entry instant is
+    t_i + interval (= next bar's open time); H1/H4 filters and the SL anchor are
+    evaluated as of that instant, exactly matching check_entry(ctx, i+1). entry_price
+    is an ESTIMATE (close[i]) — the runner sizes off the live mid/fill.
+    """
+    warmup = getattr(cfg, "warmup_bars", 0)
+    if (i + 1) <= warmup or i < 1:
+        return None
+    if not ctx.m30_cross[i]:                 # crossover on the just-closed bar
+        return None
+
+    entry_time = ctx.m30_times[i] + interval  # = next bar's open = backtest entry time
+
+    # H1 trend filter — last closed H1 as of the entry instant
+    h1_lookup = entry_time.floor("h") - ctx.one_hour
+    h1_idx = ctx.h1_time_idx.get(h1_lookup)
+    if h1_idx is None:
+        return None
+    h1_c = ctx.h1_closes[h1_idx]
+    h1_trend = ctx.h1_ema_trend[h1_idx]
+    if np.isnan(h1_c) or np.isnan(h1_trend) or h1_c <= h1_trend:
+        return None
+
+    # H4 confluence — as of the entry instant
+    if getattr(cfg, "h4_filter", False) and ctx.h4_time_idx is not None:
+        h4_lookup = (entry_time - ctx.four_hours).floor("4h")
+        h4_idx = ctx.h4_time_idx.get(h4_lookup)
+        if h4_idx is None:
+            return None
+        h4f = ctx.h4_ema_fast[h4_idx]
+        h4s = ctx.h4_ema_slow[h4_idx]
+        if np.isnan(h4f) or np.isnan(h4s) or h4f <= h4s:
+            return None
+
+    # Structural SL anchored to the crossover bar i
+    res = find_sl_with_anchor(
+        opens=ctx.m30_opens, closes=ctx.m30_closes,
+        highs=ctx.m30_highs, lows=ctx.m30_lows,
+        crossover_idx=i, lookback=None,
+    )
+    if res is None:
+        return None
+    sl, anchor_idx = res
+
+    ep = ctx.m30_closes[i]                    # estimate (~ next open); runner uses live mid
+    if ep <= sl:
+        return None
+    if (ep - sl) / ep < cfg.min_risk_pct / 100.0:
+        return None
+
+    return EntrySignal(
+        entry_price    = ep,
+        sl_price       = sl,
+        anchor_idx     = anchor_idx,
+        crossover_idx  = i,
+        anchor_time    = ctx.m30_times[anchor_idx],
+        crossover_time = ctx.m30_times[i],
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  replay() — offline driver, parity target vs ems.engine.simulate()          #
 # --------------------------------------------------------------------------- #

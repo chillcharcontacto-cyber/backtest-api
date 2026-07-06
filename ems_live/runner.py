@@ -23,7 +23,7 @@ import pandas as pd
 from ems.indicators import (add_emas, add_h1_emas, mark_crossovers,
                             build_h4, add_h4_emas)
 from .config import LiveConfig
-from .decider import build_ctx, check_entry, check_h1_exit, check_sl_hit
+from .decider import build_ctx, check_entry, check_entry_live, check_h1_exit, check_sl_hit
 from .feed import fetch_binance_recent
 from .sl_adapter import adapt_sl_to_hl
 from .position import (PositionState, PositionStore, reconcile,
@@ -218,7 +218,9 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         return store_flat(store)
 
     # ---------------- FLAT: check entry ----------------
-    sig = check_entry(ctx, i, cfg)
+    # LIVE timing: crossover on the JUST-CLOSED bar i -> enter at market NOW
+    # (~ backtest open[i+1]), not one bar late.
+    sig = check_entry_live(ctx, i, cfg, ctx.thirty_min)
     if sig is None:
         log("  flat — no entry signal")
         _notify_status(cfg, ctx, i, m30, t, log)   # market follow-up while flat
@@ -240,7 +242,14 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"SL adaptation failed: {e}"))
         return state
 
+    # entry price = live market at this instant (~ next-bar open = backtest entry).
+    # sig.entry_price is only a close[i] estimate; prefer the exchange mid.
     entry = sig.entry_price
+    if broker is not None:
+        try:
+            entry = broker.mid_price()
+        except Exception:
+            pass   # fall back to the close[i] estimate
 
     # equity-relative plan (auto-leverage). Read-only broker works in dry_run too.
     equity = None
