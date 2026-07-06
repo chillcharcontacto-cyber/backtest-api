@@ -4,6 +4,41 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-07-06
+
+**Sizing is equity-relative auto-leverage, not fixed leverage + a dollar ceiling**
+A fixed-$ risk system produces notional = risk_usd/stop%, which is large for tight
+stops — so any fixed-dollar notional ceiling (the old $500) or fixed leverage fights the
+model and refuses valid trades. Decision: `size = risk_usd/(entry-sl)` is the sole risk
+control and is never scaled to satisfy a guard; instead LEVERAGE adapts per trade =
+smallest that fits margin (`ceil(notional/(equity*buffer))`) capped so the isolated
+liquidation stays beyond the structural stop (`lev <= 1/(stop%*liq_safety_mult+maint)`).
+If the account can't carry full size liq-safely, resize DOWN (flagged) — never
+over-leverage, never silently drop. Everything reads live `account_value()` so testnet
+and mainnet behave identically relative to their own equity, and every knob is env-tunable.
+This is the ONLY sanctioned deviation from exact risk_usd (an under-capitalized account),
+and it is explicit. Leverage is not extra risk here: the stop caps loss at risk_usd and
+liquidation is kept beyond the stop.
+
+**Live entry fires on the just-closed crossover bar, not one bar later**
+The backtest enters at open[i] on a cross at bar i-1. Acting on closed bars, the live
+tick must therefore enter the instant the CROSSOVER bar closes (that bar is the latest
+closed bar) — at the live mid ~ open[i+1] ~ close[i] — not wait for the next bar to close
+(which fired ~30 min late at a worse fill). `check_entry_live()` implements this and is
+proven (parity test) to select the identical trades as the backtest's `check_entry(i+1)`
+— same SL/crossover/anchor — changing only the timing/price, never which trades. The
+offline backtest (replay/simulate) is unchanged; live gets its own correctly-timed entry.
+
+**Adversarial review is mandatory before deploying live-money path changes**
+The sizing change was audited (63 scenarios, 5 agents) and then adversarially reviewed
+(15 agents, 12→6 confirmed) before commit; the review caught 4 real follow-on bugs
+(silent unsafe 1x on ultra-wide stops, blind leverage on equity-read failure, orphaned
+unprotected position on a failed flatten, partial-fill P&L overstatement) that were
+fixed pre-deploy. Policy: money-path changes get an audit + adversarial verify, not just
+unit tests.
+
+---
+
 ## 2026-06-27
 
 **Status notifications follow the setup hierarchy (H4→H1→M30 ladder), not raw flips**

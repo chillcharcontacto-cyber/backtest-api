@@ -1,6 +1,37 @@
 # Handoff
 
-## Last Session Summary — step-by-step ladder notifications + daily heartbeat
+## Last Session Summary — two live-execution bugs fixed (sizing + entry timing)
+
+Two real bugs on the live-money path, both found, fixed, and adversarially reviewed.
+
+**Bug 1 — sizing refused valid trades (`5054608`).** The first live signal was refused
+("notional 3438 exceeds ceiling 500"). A 63-scenario audit (5-agent workflow) found the
+root cause: a fixed $500 notional ceiling is mathematically incompatible with fixed-$
+risk (notional = risk_usd/stop%), so it refused ~every valid trade. Replaced with
+**equity-relative auto-leverage** (`plan_trade`): size stays `risk_usd/(entry-sl)` (risk
+fixed); leverage = smallest that fits margin, **capped so liquidation stays beyond the
+stop**; resizes down (flagged) only if the account can't carry it — never over-leverages,
+never silently drops. Guards + broker made equity-relative + robust; ALL knobs env-tunable
+(`EMS_MAX_LEVERAGE`/`MARGIN_BUFFER_FRAC`/`LIQ_SAFETY_MULT`/`MAX_RISK_BAND_PCT`/`MIN_RISK_PCT`/
+`SLIPPAGE`/`HL_MIN_NOTIONAL`/`MAX_NOTIONAL_USD`). Adversarial review (15-agent, 12→6
+confirmed) caught + fixed 4 follow-ons: plan flags infeasible on ultra-wide stops; LIVE
+aborts if equity can't be read (no blind leverage); guarded flatten + state-saved-before-
+stop (never orphan an unprotected long); partial-fill P&L uses actual filled risk.
+Validated on real testnet numbers: the exact $3,448 trade → 4× lev, liq ~24% away, risk $20.
+
+**Bug 2 — entry one bar late (`eb9f8f6`).** User spotted it on the chart: the bot fired
+at the entry bar's CLOSE (30 min late) at a worse price. Backtest enters at open[i] on a
+cross at i-1; the live tick checked cross[i-1] on the latest closed bar, waiting an extra
+bar. Fix: `check_entry_live()` detects the crossover on the JUST-CLOSED bar and enters at
+the live mid immediately (~open[i+1] ~ close[i] = the backtest price/instant). Parity test
+proves `check_entry_live(i)` selects the identical trades as backtest `check_entry(i+1)`
+(same SL/crossover/anchor) — only timing/price corrected, WHICH trades unchanged.
+
+87 tests green. Bot still LIVE on testnet, `dry_run=True` (no orders); Render auto-redeploys.
+
+---
+
+## Previous Session Summary — step-by-step ladder notifications + daily heartbeat
 
 Telegram-notification UX work on the live bot (already deployed + soaking).
 - **Step-by-step ladder** (`fdfe51b`, new default `EMS_STATUS_MODE=steps`) — top-down
@@ -22,7 +53,7 @@ Telegram-notification UX work on the live bot (already deployed + soaking).
 
 ---
 
-## Previous Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
+## Earlier Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
 
 The EMS-V3 bot is now **running autonomously on Render** (testnet, `dry_run=True`,
 no orders). Drove the Blueprint deploy via watch-and-guide (Claude sees via
@@ -75,27 +106,35 @@ healthcheck `https://hc-ping.com/27d79596-d668-44e4-b8c8-991f6912ee9c`.
 
 ## Currently Working On
 
-**Soaking — bot is LIVE & autonomous on Render (testnet, dry_run, no orders).** Nothing
-mid-flight. It posts ⚪ FLAT status each :30 and will fire 🟢 ENTRY when all 3 gates
-align (M30 cross + H1 close > ema50 + H4 ema20 > ema100). Just let it run + watch Telegram.
-- Render worker `ems-live-bot`, kill switch = **10 losses/day**, risk $20
+**Soaking — bot LIVE & autonomous on Render (testnet, dry_run, no orders); execution
+path now correct.** Nothing mid-flight. Both live-execution bugs fixed this session
+(sizing auto-leverage + entry timing). It will fire 🟢 ENTRY on a fresh M30 cross while
+H1>ema50 and H4 ema20>ema100, now at the RIGHT time/price and at a size that always fits.
+- Render worker `ems-live-bot`, kill switch = **10 losses/day**, risk $20, **auto-leverage**
 - Testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`, equity ~999 mock USDC
-- Agent `ems-bot` authorized, BTC 3x isolated; creds in gitignored `.env`
-- Mainnet: 9.8 USDC in spot (faucet-gate deposit)
+- Agent `ems-bot` authorized; sizing/leverage/guards all env-tunable; creds in gitignored `.env`
+- Mainnet: 9.8 USDC in spot (faucet-gate deposit) — **too small for risk $20**; for mainnet
+  either deposit more or drop `EMS_RISK_USD` (auto-leverage handles the rest)
 - Local run: `python -m ems_live.run once` / `python -m ems_live.run`
+- **After redeploy verify** the `[run]` line shows `auto-lev(...)`; if not, the blueprint
+  didn't sync the new EMS_* env — set them in the worker dashboard.
 
 ---
 
 ## Parked / Unfinished
 
 **EMS live bot — DEPLOYED & LIVE on testnet (dry_run); remaining = soak + mainnet:**
-- **Missed-bar catch-up on restart** — runner resumes at next bar; if down across a
-  `:30` H1-exit bar, that exit is skipped. Low priority — stop rests on exchange so
-  positions stay protected; only the computed H1 exit can be missed.
-- **Phase 5: mainnet.** Flip HL_TESTNET=false, transfer real USDC spot→perp (master-
-  signed, in UI — agent can't), tiny `risk_usd`, mainnet dry-run first, then arm.
-- **Slippage in deviation** — EXIT deviation is fee-only; fold in real fill slippage
-  from exchange data for a true model-vs-actual.
+- **Staged edge-robustness (from the 63-scenario audit, not blocking common trades):**
+  in-bar retries for a transient Binance/HL feed error (else the crossover bar is lost);
+  SL-adapt fallback to the Binance stop (basis-adjusted) when HL candles are empty; tz
+  hardening in sl_adapter; spot→perp transfer for a Unified Account with collateral only
+  in spot; feasibility/no-retry on a single-bar refusal. Full list: audit output
+  `tasks/wbwomb00s.output`.
+- **Missed-bar catch-up on restart** — if down across a `:30` H1-exit bar, that exit is
+  skipped (stop still rests on exchange, so protected).
+- **Phase 5: mainnet.** Deposit real USDC or set tiny `EMS_RISK_USD`, flip HL_TESTNET=false,
+  spot→perp in UI, mainnet dry-run first, then arm. Auto-leverage makes risk exact.
+- **Slippage in deviation** — EXIT deviation is fee-only; fold in real fill slippage.
 
 DONE (no longer parked): Render deploy (LIVE), monitoring (Telegram+healthchecks),
 count-based kill switch, per-tick reconcile, entrypoint, unbuffered logs, 451 fix.
