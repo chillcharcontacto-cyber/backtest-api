@@ -57,14 +57,32 @@ def build():
     status_mode = os.environ.get("EMS_STATUS_MODE", "steps")
     state_path = os.environ.get("EMS_STATE_PATH", "ems_live_state.json")
 
+    # --- sizing / leverage / guards (equity-relative; tunable per venue) ---
+    max_lev      = int(os.environ.get("EMS_MAX_LEVERAGE", "0"))          # 0 = coin max
+    lev_fallback = int(os.environ.get("EMS_LEVERAGE", "3"))
+    buffer_frac  = float(os.environ.get("EMS_MARGIN_BUFFER_FRAC", "0.90"))
+    liq_mult     = float(os.environ.get("EMS_LIQ_SAFETY_MULT", "1.5"))
+    max_band     = float(os.environ.get("EMS_MAX_RISK_BAND_PCT", "15"))
+    min_risk     = float(os.environ.get("EMS_MIN_RISK_PCT", "0.1"))
+    slippage     = float(os.environ.get("EMS_SLIPPAGE", "0.01"))
+    min_notional = float(os.environ.get("EMS_HL_MIN_NOTIONAL", "10"))
+    max_notional = float(os.environ.get("EMS_MAX_NOTIONAL_USD", "0"))    # 0 = off
+    isolated     = _bool(os.environ.get("EMS_ISOLATED_MARGIN"), True)
+
     cfg = LiveConfig(testnet=testnet, dry_run=dry_run, risk_usd=risk,
                      max_daily_loss_r=max_dd_r, max_daily_losses=max_dd_n,
-                     status_mode=status_mode, state_path=state_path)
+                     status_mode=status_mode, state_path=state_path,
+                     leverage=lev_fallback, max_leverage=max_lev,
+                     margin_buffer_frac=buffer_frac, liq_safety_mult=liq_mult,
+                     max_risk_band_pct=max_band, min_risk_pct=min_risk,
+                     slippage=slippage, hl_min_notional_usd=min_notional,
+                     max_notional_usd=max_notional, isolated_margin=isolated)
     store = PositionStore(cfg.state_path)
     broker = LiveBroker(cfg, address=master, secret_key=agent)
 
     print(f"[run] testnet={cfg.testnet} dry_run={cfg.dry_run} risk_usd={cfg.risk_usd} "
           f"strategy={cfg.strategy_name} h4={cfg.h4_ema_fast}/{cfg.h4_ema_slow} "
+          f"auto-lev(max={cfg.max_leverage or 'coin'},buf={cfg.margin_buffer_frac},liqx={cfg.liq_safety_mult}) "
           f"kill={cfg.max_daily_losses}losses/{cfg.max_daily_loss_r}R state={cfg.state_path} "
           f"agent={'yes' if agent else 'no (read-only)'}")
     return cfg, store, broker

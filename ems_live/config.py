@@ -33,11 +33,20 @@ class LiveConfig:
     risk_usd:       float = 20.0         # fixed $ risk per trade (change anytime)
     taker_fee:      float = 0.00045      # HL perp base taker (~0.045%/side) for fee estimate
 
-    # --- safety guards (orders refused if violated) ---
-    max_notional_usd:   float = 500.0    # absolute ceiling on position notional
-    max_risk_band_pct:  float = 15.0     # reject if stop distance > this % of entry
-    leverage:           int   = 3        # leverage cap on the coin
+    # --- sizing / leverage (equity-relative; per-trade auto-leverage) ---
+    # size is ALWAYS risk_usd/(entry-sl) — risk is fixed. Leverage adapts so the
+    # position fits margin while keeping liquidation beyond the structural stop.
+    leverage:           int   = 3        # fallback/boot leverage if equity read fails
+    max_leverage:       int   = 0        # 0 = use the coin's exchange max (from meta)
+    margin_buffer_frac: float = 0.90     # use at most this fraction of equity as margin
+    liq_safety_mult:    float = 1.5      # liquidation must be >= stop_dist * this beyond entry
+    hl_min_notional_usd: float = 10.0    # Hyperliquid minimum order value
+    slippage:           float = 0.01     # explicit market-order slippage bound (1%)
     isolated_margin:    bool  = True     # isolated so one trade can't bleed the account
+
+    # --- safety guards ---
+    max_notional_usd:   float = 0.0      # optional absolute notional ceiling (0 = OFF; margin-fit governs)
+    max_risk_band_pct:  float = 15.0     # reject if stop distance > this % of entry
     max_daily_losses:   int   = 10       # halt new entries after this many losing trades/day (0 disables)
     max_daily_loss_r:   float = 0.0      # also halt if today's realized R <= -this (0 disables)
     dry_run:            bool  = True     # compute+log orders, DO NOT send (flip in Phase 3)

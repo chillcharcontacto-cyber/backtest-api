@@ -36,6 +36,23 @@ services:
         value: "0"                # R-based cap off (count-based is primary)
       - key: EMS_STATUS_MODE
         value: "steps"            # H4→H1→M30 ladder + daily heartbeat (step-by-step)
+      # --- sizing / leverage (equity-relative auto-leverage; per-venue tunable) ---
+      - key: EMS_MAX_LEVERAGE
+        value: "0"                # 0 = use the coin's exchange max
+      - key: EMS_MARGIN_BUFFER_FRAC
+        value: "0.90"             # use at most 90% of equity as margin
+      - key: EMS_LIQ_SAFETY_MULT
+        value: "1.5"              # liquidation must sit >= 1.5x the stop distance beyond entry
+      - key: EMS_MAX_RISK_BAND_PCT
+        value: "15"               # skip signals whose structural stop is wider than this %
+      - key: EMS_MIN_RISK_PCT
+        value: "0.1"
+      - key: EMS_SLIPPAGE
+        value: "0.01"             # market-order slippage bound
+      - key: EMS_HL_MIN_NOTIONAL
+        value: "10"
+      - key: EMS_MAX_NOTIONAL_USD
+        value: "0"                # optional absolute ceiling; 0 = OFF (margin-fit governs)
       - key: EMS_STATE_PATH
         value: /data/ems_live_state.json
       - key: HL_MASTER_ADDRESS

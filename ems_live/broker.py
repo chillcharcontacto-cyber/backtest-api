@@ -25,11 +25,14 @@ class LiveBroker:
         from hyperliquid.info import Info
         self._info = Info(cfg.hl_api_url, skip_ws=True)
 
-        # asset metadata for rounding
+        # asset metadata for rounding + leverage/margin limits
         meta = self._info.meta()
         self._asset = next(a for a in meta["universe"] if a["name"] == cfg.coin)
         self._sz_decimals = int(self._asset["szDecimals"])
         self._px_decimals = max(0, 6 - self._sz_decimals)   # perps: MAX_DECIMALS=6
+        self._max_leverage = int(self._asset.get("maxLeverage", 20))
+        # HL maintenance margin ≈ half the initial margin at max leverage
+        self._maint_margin_frac = 0.5 / self._max_leverage
 
         self._exchange = None
         if secret_key:
@@ -46,18 +49,40 @@ class LiveBroker:
     def round_size(self, sz: float) -> float:
         return round(sz, self._sz_decimals)
 
+    def _px_decimals_for(self, px: float) -> int:
+        import math
+        sig_decimals = 5 - 1 - int(math.floor(math.log10(abs(px))))  # decimals for 5 sig figs
+        return min(sig_decimals, self._px_decimals)                  # may be negative
+
     def round_px(self, px: float) -> float:
         """
         Hyperliquid perp price: at most 5 significant figures AND at most
         (6 - szDecimals) decimal places. Integer prices always allowed.
         e.g. BTC 63522.9 -> 63523 (5 sig figs forces integer at ~65k).
         """
+        if px <= 0:
+            return 0.0
+        return round(px, self._px_decimals_for(px))
+
+    def round_stop_px(self, px: float) -> float:
+        """
+        Round a LONG's stop trigger DOWN to a valid tick, so rounding never nudges
+        the stop up toward (or through) the market — keeps it protective.
+        """
         import math
         if px <= 0:
             return 0.0
-        sig_decimals = 5 - 1 - int(math.floor(math.log10(abs(px))))  # decimals for 5 sig figs
-        nd = min(sig_decimals, self._px_decimals)                    # may be negative
-        return round(px, nd)
+        nd = self._px_decimals_for(px)
+        factor = 10.0 ** nd
+        return math.floor(px * factor) / factor
+
+    @property
+    def coin_max_leverage(self) -> int:
+        return self._max_leverage
+
+    @property
+    def maint_margin_frac(self) -> float:
+        return self._maint_margin_frac
 
     def _require_exchange(self):
         if self._exchange is None:
@@ -70,22 +95,30 @@ class LiveBroker:
     def mid_price(self) -> float:
         return float(self._info.all_mids()[self.cfg.coin])
 
+    STABLES = ("USDC", "USDT", "USDT0", "USDE", "USDH", "USD")
+
     def account_value(self) -> float:
         """
-        Tradable equity. Under a Unified Account the perp marginSummary can read 0
-        while collateral sits in spot, so sum perp accountValue + spot USDC.
+        Tradable equity = perp accountValue + spot stablecoins. Under a Unified
+        Account the perp marginSummary can read 0 while collateral sits in spot.
+        Raises on a hard read failure so callers can treat it as retryable rather
+        than silently sizing against a wrong (zeroed) equity.
         """
         if not self.address:
             raise ValueError("address required")
-        perp = float(self._info.user_state(self.address)["marginSummary"]["accountValue"])
+        st = self._info.user_state(self.address)
+        try:
+            perp = float(st["marginSummary"]["accountValue"])
+        except (KeyError, TypeError, ValueError):
+            perp = float(st.get("withdrawable", 0) or 0)
         spot = 0.0
         try:
             sp = self._info.spot_user_state(self.address)
             for b in sp.get("balances", []):
-                if b.get("coin") == "USDC":
-                    spot = float(b.get("total", 0))
+                if b.get("coin") in self.STABLES:
+                    spot += float(b.get("total", 0) or 0)
         except Exception:
-            pass
+            pass   # spot leg optional; perp already captured
         return perp + spot
 
     def open_position(self) -> Optional[dict]:
@@ -112,10 +145,15 @@ class LiveBroker:
     # ----------------------------------------------------------------- #
 
     def set_margin_mode(self):
-        """Set leverage + isolated/cross on the coin. Idempotent."""
+        """Set the fallback/boot leverage + isolated/cross on the coin. Idempotent."""
+        return self.update_leverage(self.cfg.leverage)
+
+    def update_leverage(self, leverage: int):
+        """Set leverage (isolated/cross per cfg) on the coin. Idempotent; per-trade."""
         self._require_exchange()
+        lev = max(1, min(int(leverage), self._max_leverage))
         is_cross = not self.cfg.isolated_margin
-        return self._exchange.update_leverage(self.cfg.leverage, self.cfg.coin, is_cross)
+        return self._exchange.update_leverage(lev, self.cfg.coin, is_cross)
 
     # ----------------------------------------------------------------- #
     #  ORDERS (long-only)                                                 #
@@ -123,12 +161,15 @@ class LiveBroker:
 
     def market_entry(self, size: float) -> dict:
         """
-        Market BUY (open long). Returns {"avg_px": float, "filled": float, "raw": ...}.
-        Raises RuntimeError if not fully/any filled.
+        Market BUY (open long) with an explicit slippage bound (cfg.slippage).
+        Returns {"avg_px": float, "filled": float (actual), "raw": ...}.
+        Raises RuntimeError if the size rounds to 0 or nothing filled.
         """
         self._require_exchange()
         size = self.round_size(size)
-        res = self._exchange.market_open(self.cfg.coin, True, size)
+        if size <= 0:
+            raise RuntimeError("market_entry: size rounds to 0")
+        res = self._exchange.market_open(self.cfg.coin, True, size, None, self.cfg.slippage)
         if res.get("status") != "ok":
             raise RuntimeError(f"market_entry failed: {res}")
         statuses = res["response"]["data"]["statuses"]
@@ -136,16 +177,17 @@ class LiveBroker:
         if filled is None:
             raise RuntimeError(f"market_entry not filled: {statuses}")
         return {"avg_px": float(filled["avgPx"]),
-                "filled": float(filled["totalSz"]),
+                "filled": float(filled["totalSz"]),   # ACTUAL filled size (may be partial)
                 "raw": res}
 
     def place_stop(self, trigger_price: float, size: float) -> int:
         """
         Reduce-only stop-market SELL at trigger_price. Returns the resting order id.
+        Trigger is floored to a valid tick so rounding never nudges the stop up.
         """
         self._require_exchange()
         size = self.round_size(size)
-        trig = self.round_px(trigger_price)
+        trig = self.round_stop_px(trigger_price)
         order_type = {"trigger": {"triggerPx": trig, "isMarket": True, "tpsl": "sl"}}
         res = self._exchange.order(
             self.cfg.coin, False, size, trig, order_type, reduce_only=True

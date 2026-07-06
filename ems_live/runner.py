@@ -44,6 +44,16 @@ class Order:
     price:   Optional[float] = None   # trigger for STOP
 
 
+@dataclass
+class TradePlan:
+    size:     float
+    leverage: int
+    notional: float
+    feasible: bool
+    resized:  bool
+    reason:   str
+
+
 def compute_size(entry: float, sl: float, risk_usd: float) -> float:
     """Fixed-$ risk position size in coin units."""
     risk_per_unit = entry - sl
@@ -52,11 +62,63 @@ def compute_size(entry: float, sl: float, risk_usd: float) -> float:
     return risk_usd / risk_per_unit
 
 
+def plan_trade(entry: float, sl: float, risk_usd: float, equity: float,
+               cfg: LiveConfig, coin_max_lev: int, maint_frac: float) -> TradePlan:
+    """
+    Equity-relative sizing/leverage. Size is ALWAYS risk_usd/(entry-sl) — dollar
+    risk is fixed. Leverage is the SMALLEST that fits margin, capped so the
+    liquidation price stays beyond the structural stop (never over-leverage).
+
+    liquidation distance (long, isolated) = 1/lev - maint_frac; we require it to
+    exceed stop_dist * liq_safety_mult, so:
+        lev <= 1 / (stop_pct_frac*liq_safety_mult + maint_frac)   (lev_liqsafe)
+    margin fit: lev >= ceil(notional / (equity*margin_buffer_frac))   (lev_fit)
+
+    If lev_fit > min(lev_liqsafe, coin_max): the account can't take full size
+    safely -> resize DOWN (reduced risk, flagged) rather than over-leverage or
+    silently drop.
+    """
+    import math
+    risk_per_unit = entry - sl
+    if risk_per_unit <= 0 or entry <= 0:
+        return TradePlan(0.0, 1, 0.0, False, False, "SL not below entry")
+
+    size = risk_usd / risk_per_unit
+    notional = size * entry
+    stop_pct = risk_per_unit / entry
+    usable = max(equity, 0.0) * cfg.margin_buffer_frac
+
+    max_lev = coin_max_lev if cfg.max_leverage <= 0 else min(cfg.max_leverage, coin_max_lev)
+    max_lev = max(1, max_lev)
+
+    denom = stop_pct * cfg.liq_safety_mult + maint_frac
+    lev_liqsafe = int(math.floor(1.0 / denom)) if denom > 0 else max_lev
+    if lev_liqsafe < 1:
+        # even 1x can't keep liquidation the required margin beyond this (very wide)
+        # stop — refuse rather than silently ship an under-buffered trade.
+        return TradePlan(0.0, 1, 0.0, False, False,
+                         f"stop too wide for a liquidation-safe entry ({stop_pct*100:.1f}%)")
+    hard_max = max(1, min(max_lev, lev_liqsafe))
+
+    lev_fit = int(math.ceil(notional / usable)) if usable > 0 else 10**9
+    lev_fit = max(1, lev_fit)
+
+    if lev_fit <= hard_max:
+        return TradePlan(size, min(max(lev_fit, 1), hard_max), notional, True, False, "ok")
+
+    # Cannot fit full risk while staying liquidation-safe -> resize down.
+    max_notional = usable * hard_max
+    size2 = max_notional / entry if entry > 0 else 0.0
+    feasible = size2 > 0
+    return TradePlan(size2, hard_max, size2 * entry, feasible, True,
+                     "resized down to fit margin while keeping liquidation beyond the stop")
+
+
 def guard_order(entry: float, sl: float, size: float, cfg: LiveConfig):
     """
-    Return (ok: bool, reason: str). Refuse the trade on any violation.
-    These are the last-line protections against a sizing/SL bug opening a
-    runaway position.
+    Last-line sanity guards (band + min/optional-max notional + positive size).
+    Margin/leverage affordability is handled by plan_trade(); NO fixed-$ notional
+    ceiling here unless cfg.max_notional_usd > 0 (off by default).
     """
     if not (sl < entry):
         return False, f"SL not below entry (sl={sl}, entry={entry})"
@@ -67,12 +129,14 @@ def guard_order(entry: float, sl: float, size: float, cfg: LiveConfig):
     if risk_pct > cfg.max_risk_band_pct:
         return False, f"stop too wide: {risk_pct:.3f}% > {cfg.max_risk_band_pct}%"
 
-    notional = size * entry
-    if notional > cfg.max_notional_usd:
-        return False, (f"notional {notional:.2f} exceeds ceiling "
-                       f"{cfg.max_notional_usd}")
     if size <= 0:
         return False, f"non-positive size {size}"
+
+    notional = size * entry
+    if notional < cfg.hl_min_notional_usd:
+        return False, f"notional ${notional:.2f} below HL min ${cfg.hl_min_notional_usd}"
+    if cfg.max_notional_usd > 0 and notional > cfg.max_notional_usd:
+        return False, f"notional {notional:.2f} exceeds ceiling {cfg.max_notional_usd}"
 
     return True, "ok"
 
@@ -177,58 +241,127 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         return state
 
     entry = sig.entry_price
-    try:
-        size = compute_size(entry, sl_hl, cfg.risk_usd)
-    except ValueError as e:
-        log(f"  ENTRY ABORTED — sizing error: {e}")
-        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"sizing error: {e}"))
+
+    # equity-relative plan (auto-leverage). Read-only broker works in dry_run too.
+    equity = None
+    coin_max = cfg.max_leverage or 40
+    maint = 0.0125
+    if broker is not None:
+        coin_max = broker.coin_max_leverage
+        maint = broker.maint_margin_frac
+        try:
+            equity = broker.account_value()
+        except Exception as e:
+            log(f"  equity read failed ({e!r}) — falling back to fixed leverage {cfg.leverage}x")
+
+    if equity is not None and equity > 0:
+        plan = plan_trade(entry, sl_hl, cfg.risk_usd, equity, cfg, coin_max, maint)
+    elif not cfg.dry_run:
+        # LIVE with no equity read -> we cannot size liquidation-safely. Never enter
+        # blind on the money path; skip and retry on the next signal.
+        log("  ENTRY ABORTED — equity unavailable, cannot size safely")
+        notify.send_telegram(notify.fmt_blocked(
+            "ENTRY ABORTED", "equity read unavailable — skipping to avoid unsafe leverage"))
+        return state
+    else:
+        # dry_run only: fixed fallback purely to log the intended trade
+        try:
+            sz = compute_size(entry, sl_hl, cfg.risk_usd)
+        except ValueError as e:
+            log(f"  ENTRY ABORTED — sizing error: {e}")
+            notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"sizing error: {e}"))
+            return state
+        plan = TradePlan(sz, cfg.leverage, sz * entry, True, False, "dry-run no-equity fallback")
+
+    if not plan.feasible:
+        log(f"  ENTRY ABORTED — {plan.reason}")
+        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", plan.reason))
         return state
 
-    ok, reason = guard_order(entry, sl_hl, size, cfg)
+    ok, reason = guard_order(entry, sl_hl, plan.size, cfg)
     if not ok:
         log(f"  ENTRY REFUSED by guard: {reason}")
         notify.send_telegram(notify.fmt_blocked("ENTRY REFUSED", reason))
         return state
 
-    log(f"  ENTRY SIGNAL  entry~{entry:.2f}  binance_sl={sig.sl_price:.2f}  "
-        f"hl_sl={sl_hl:.2f}  size={size:.6f}  notional={size*entry:.2f}")
+    if plan.resized:
+        note = (f"account can't carry full risk with a liq-safe stop; sized down to "
+                f"{plan.size:.6f} BTC (lev {plan.leverage}x)")
+        log(f"  RISK RESIZED — {note}")
+        notify.send_telegram(notify.fmt_blocked("RISK RESIZED", note))
+
+    log(f"  ENTRY SIGNAL entry~{entry:.2f} hl_sl={sl_hl:.2f} size={plan.size:.6f} "
+        f"notional={plan.notional:.2f} lev={plan.leverage}x resized={plan.resized}")
 
     if cfg.dry_run:
-        log("  DRY_RUN: would market_entry(size) then place_stop(hl_sl, size)")
+        log("  DRY_RUN: would update_leverage + market_entry + place_stop")
         notify.send_telegram("🟡 DRY_RUN entry signal\n"
-                             + notify.fmt_entry(t, entry, sl_hl, size, cfg.risk_usd, cfg.leverage))
+                             + notify.fmt_entry(t, entry, sl_hl, plan.size, cfg.risk_usd, plan.leverage))
         return state
 
     # --- LIVE ---
-    fill = broker.market_entry(size)
-    actual_entry = fill["avg_px"]
-    log(f"  FILLED entry @ {actual_entry:.2f} sz={fill['filled']}")
-
-    # stop-confirmed-or-flatten: a fill without a working stop is the worst state
     try:
-        stop_oid = broker.place_stop(sl_hl, size)
+        broker.update_leverage(plan.leverage)
     except Exception as e:
-        log(f"  STOP PLACEMENT FAILED ({e!r}) — FLATTENING immediately")
-        broker.market_close()
-        notify.send_telegram(notify.fmt_blocked("STOP FAILED → FLATTENED", repr(e)))
-        return store_flat(store)
+        log(f"  ENTRY ABORTED — leverage set failed: {e!r}")
+        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"leverage set failed: {e!r}"))
+        return state
 
-    if stop_oid == -1:
-        log("  stop triggered on placement (price already through SL) — position closed")
-        notify.send_telegram(notify.fmt_blocked("STOP TRIGGERED ON PLACEMENT",
-                                                "price already through SL — closed"))
-        return store_flat(store)
+    try:
+        fill = broker.market_entry(plan.size)
+    except Exception as e:
+        log(f"  ENTRY ABORTED — market_entry failed: {e!r}")
+        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"market_entry failed: {e!r}"))
+        return state
+    actual_entry = fill["avg_px"]
+    actual_size = fill["filled"]        # canonical: use FILLED size everywhere below
+    log(f"  FILLED entry @ {actual_entry:.2f} sz={actual_size}")
 
+    # Persist the OPEN position IMMEDIATELY (before the stop) so a later failure can
+    # never leave an untracked live long. stop_oid filled in once the stop rests.
     new = PositionState(
         status=IN_POSITION,
-        entry_time=str(t), entry_price=actual_entry, sl_price=sl_hl, size=size,
+        entry_time=str(t), entry_price=actual_entry, sl_price=sl_hl, size=actual_size,
         anchor_time=str(sig.anchor_time), crossover_time=str(sig.crossover_time),
-        stop_oid=stop_oid,
+        stop_oid=None,
     )
     store.save(new)
-    log(f"  POSITION OPEN  entry={actual_entry:.2f} stop={sl_hl:.2f} oid={stop_oid}")
-    notify.send_telegram(notify.fmt_entry(t, actual_entry, sl_hl, size,
-                                          cfg.risk_usd, cfg.leverage))
+
+    # place the resting stop (retry before giving up on a good fill)
+    stop_oid = None
+    for attempt in range(3):
+        try:
+            stop_oid = broker.place_stop(sl_hl, actual_size)
+            break
+        except Exception as e:
+            log(f"  place_stop attempt {attempt + 1}/3 failed: {e!r}")
+
+    if stop_oid == -1:
+        log("  stop triggered on placement (price already through SL) — recording -1R")
+        _notify_exit(cfg, broker, new, "STRUCTURAL_SL", sl_hl, -1.00, t, today, log)
+        return store_flat(store)
+
+    if stop_oid is None:
+        # couldn't place the stop — try to flatten, but GUARD the close so a failed
+        # flatten never orphans an unprotected position with a stale FLAT store.
+        log("  STOP PLACEMENT FAILED after retries — flattening")
+        try:
+            broker.market_close()
+            notify.send_telegram(notify.fmt_blocked("STOP FAILED → FLATTENED", "could not place stop"))
+            return store_flat(store)
+        except Exception as e:
+            log(f"  FLATTEN ALSO FAILED ({e!r}) — position OPEN & UNPROTECTED, keeping state")
+            notify.send_telegram(notify.fmt_blocked(
+                "⛔ UNPROTECTED POSITION",
+                "stop AND flatten both failed — CHECK MANUALLY. Bot keeps managing it."))
+            return new   # keep IN_POSITION so next tick/reconcile manages/closes it
+
+    new.stop_oid = stop_oid
+    store.save(new)
+    log(f"  POSITION OPEN entry={actual_entry:.2f} stop={sl_hl:.2f} sz={actual_size} "
+        f"lev={plan.leverage}x oid={stop_oid}")
+    notify.send_telegram(notify.fmt_entry(t, actual_entry, sl_hl, actual_size,
+                                          cfg.risk_usd, plan.leverage))
     return new
 
 
@@ -277,12 +410,16 @@ def _notify_exit(cfg, broker, state, reason, exit_px, r, exit_time, today, log):
     led = _record(cfg, r, today, log)            # ledger keeps model R
     size = state.size or 0.0
     entry = state.entry_price or 0.0
+    sl = state.sl_price or 0.0
     fees = cfg.taker_fee * (size * entry + size * exit_px)
 
+    # $ P&L off the ACTUAL filled size (a partial fill risks < risk_usd), so 1R here
+    # is the real dollar risk of the position, not the nominal risk_usd.
+    actual_risk = size * (entry - sl) if (entry > sl and size > 0) else cfg.risk_usd
     model_r = r
-    gross_pnl = model_r * cfg.risk_usd
+    gross_pnl = model_r * actual_risk
     net_pnl = gross_pnl - fees
-    net_r = net_pnl / cfg.risk_usd if cfg.risk_usd else 0.0
+    net_r = net_pnl / actual_risk if actual_risk else 0.0
     deviation = ((net_r - model_r) / abs(model_r) * 100.0) if model_r else 0.0
 
     pct = None
