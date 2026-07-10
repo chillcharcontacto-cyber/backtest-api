@@ -4,7 +4,21 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
-## 2026-07-06
+## 2026-07-10
+
+**Testnet Unified Account: spot USDC is the perp trading margin — no transfer needed**
+The testnet master holds ~$998 in SPOT and $0 in perp `marginSummary` (cosmetic under a
+Unified Account). Verified empirically: a live 0.0002 BTC perp market order FILLED with
+funds in spot, then closed. So the bot needs NO spot→perp transfer step on testnet; the
+spot balance backs the perp order directly, and `account_value()` (perp+spot) already
+reports the right tradable equity for auto-leverage.
+
+**Armed testnet (`EMS_DRY_RUN=false`) to get the first real autonomous execution**
+After confirming the dry-run cards reproduce correct auto-leverage sizing (e.g. a 0.31%
+tight-stop trade that the old $500 ceiling would have refused now sizes at ~8×, risk $20)
+and correct on-time entries, flipped the worker to armed. The bot now places real
+(fake-money) testnet orders on the next aligned signal. On-chain reconciliation of that
+first fill (entry/stop/size/leverage) is the remaining end-to-end proof.
 
 **Sizing is equity-relative auto-leverage, not fixed leverage + a dollar ceiling**
 A fixed-$ risk system produces notional = risk_usd/stop%, which is large for tight

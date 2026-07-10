@@ -1,6 +1,28 @@
 # Handoff
 
-## Last Session Summary — two live-execution bugs fixed (sizing + entry timing)
+## Last Session Summary — verified the fixes in dry-run, ARMED testnet
+
+No code changes — verification + arming only.
+- **Reconciled "several trades this week" against on-chain reality.** Queried HL fills
+  for the master `0x18ce…6964`: TESTNET has only the June-3 manual Phase-3 fills (14, all
+  long) — NO autonomous trades; MAINNET fills are the user's OWN 2025 manual trades (10
+  shorts / 2 longs, agent NOT authorized there) — not the bot. Conclusion: the bot placed
+  no real orders; the "trades" were **🟡 DRY_RUN cards** (bot was still `dry_run=True`).
+- **The dry-run cards VALIDATE both fixes** (post-`5054608`/`eb9f8f6`): e.g. 2026-07-07
+  entry 63,916/sl 62,980 → $1,366 notional, **2× lev, risk $20** (old $500 ceiling would
+  have refused this); 2026-07-09 entry 61,563/sl 61,371 → 0.31% tight stop, ~$6.4k
+  notional (the exact case the ceiling killed) now sized fine. Entries at clean bar opens
+  (on-time, not a bar late).
+- **Confirmed Unified Account: spot USDC backs perp orders** — placed a live 0.0002 BTC
+  testnet order that FILLED with funds in spot, then closed. So NO spot→perp transfer
+  needed; the $998 spot is the trading margin (perp balance reads 0 cosmetically).
+- **ARMED testnet:** user set `EMS_DRY_RUN=false`; 🚀 card confirms `dry_run=False`,
+  risk $20, kill 10 losses/day. Gates currently H4✅ H1✅, M30 armed (stage 2) — next
+  fresh M30 cross fires the FIRST real testnet trade.
+
+---
+
+## Previous Session Summary — two live-execution bugs fixed (sizing + entry timing)
 
 Two real bugs on the live-money path, both found, fixed, and adversarially reviewed.
 
@@ -31,7 +53,7 @@ proves `check_entry_live(i)` selects the identical trades as backtest `check_ent
 
 ---
 
-## Previous Session Summary — step-by-step ladder notifications + daily heartbeat
+## Earlier Session Summary — step-by-step ladder notifications + daily heartbeat
 
 Telegram-notification UX work on the live bot (already deployed + soaking).
 - **Step-by-step ladder** (`fdfe51b`, new default `EMS_STATUS_MODE=steps`) — top-down
@@ -53,7 +75,7 @@ Telegram-notification UX work on the live bot (already deployed + soaking).
 
 ---
 
-## Earlier Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
+## Older Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
 
 The EMS-V3 bot is now **running autonomously on Render** (testnet, `dry_run=True`,
 no orders). Drove the Blueprint deploy via watch-and-guide (Claude sees via
@@ -106,18 +128,20 @@ healthcheck `https://hc-ping.com/27d79596-d668-44e4-b8c8-991f6912ee9c`.
 
 ## Currently Working On
 
-**Soaking — bot LIVE & autonomous on Render (testnet, dry_run, no orders); execution
-path now correct.** Nothing mid-flight. Both live-execution bugs fixed this session
-(sizing auto-leverage + entry timing). It will fire 🟢 ENTRY on a fresh M30 cross while
-H1>ema50 and H4 ema20>ema100, now at the RIGHT time/price and at a size that always fits.
-- Render worker `ems-live-bot`, kill switch = **10 losses/day**, risk $20, **auto-leverage**
-- Testnet/master address: `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`, equity ~999 mock USDC
-- Agent `ems-bot` authorized; sizing/leverage/guards all env-tunable; creds in gitignored `.env`
-- Mainnet: 9.8 USDC in spot (faucet-gate deposit) — **too small for risk $20**; for mainnet
-  either deposit more or drop `EMS_RISK_USD` (auto-leverage handles the rest)
+**ARMED on testnet — waiting for the FIRST real autonomous trade.** `EMS_DRY_RUN=false`
+(🚀 card confirms `dry_run=False`). Nothing mid-flight; execution path verified in dry-run.
+Next fresh M30 cross while H4✅ H1✅ → a real testnet fill.
+- Render worker `ems-live-bot`, kill switch **10 losses/day**, risk $20, **auto-leverage**
+- Testnet/master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$998 USDC in SPOT** =
+  the trading margin (Unified Account backs perp off spot — verified by a live fill).
+- Agent `ems-bot` authorized (testnet only); sizing/leverage/guards all env-tunable.
+- Mainnet: 9.8 USDC in spot; agent NOT authorized on mainnet. For Phase 5, deposit more
+  or drop `EMS_RISK_USD` (auto-leverage handles the rest).
 - Local run: `python -m ems_live.run once` / `python -m ems_live.run`
-- **After redeploy verify** the `[run]` line shows `auto-lev(...)`; if not, the blueprint
-  didn't sync the new EMS_* env — set them in the worker dashboard.
+
+**When the first real trade fires (🟢 ENTRY with NO 🟡 DRY_RUN line):** pull the on-chain
+fill for `0x18ce…6964` on testnet and confirm entry px, resting stop order, size, and
+auto-leverage match the card. That's the end-to-end execution proof still outstanding.
 
 ---
 
