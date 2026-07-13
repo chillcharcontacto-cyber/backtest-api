@@ -1,6 +1,36 @@
 # Handoff
 
-## Last Session Summary — verified the fixes in dry-run, ARMED testnet
+## Last Session Summary — first testnet trade verified; WENT LIVE ON MAINNET 🎯
+
+No code changes — verification + mainnet go-live.
+
+**Verified the first real testnet trade (2026-07-12) end-to-end — execution is correct.**
+Reconciled the Telegram cards against on-chain fills:
+- Entry: on-time market long 0.06689 BTC @ 64,103, notional $4,288, **auto-leverage 5×**
+  (the old $500 ceiling would have refused this) — the crossover bar closed 17:00 and it
+  entered 17:00 (timing fix working; card labels it 16:30 = the bar's open time).
+- Stop: resting structural stop placed at 63,787, **triggered**, closed the position.
+- Result: **−1.19R** (−$24). The extra ~0.19R beyond −1R is **testnet thin-book slippage**
+  (stop filled 63,745.9 vs 63,787 trigger; entry swept 8 fills). Mainnet's deep book fills
+  far tighter — not a defect.
+- 🔵 IN-POS cards fire once per H1 close by design (5-6 for a 6h trade) — explained.
+
+**Found a P&L-reporting gap (staged):** SL exits are recorded/reported at the trigger
+price (clean −1.00R), NOT the actual fill, so the card under-reports the loss by the
+slippage (~$2.75 on that trade). Fix = read the real SL fill for the exit record.
+
+**WENT LIVE ON MAINNET (real money):**
+- Funded ~$328 USDC (in spot; unified account backs perp — verified read-only).
+- Authorized a MAINNET agent `ems-bot-main` (`0xc07aA2354249ba34D7a4436fEDEC6864Dd07b8Fd`,
+  valid ~180 days). Key is in Render env only (trade-only, cannot withdraw).
+- Render env: `HL_TESTNET=false`, `EMS_RISK_USD=3`, `EMS_STATE_PATH=/data/ems_mainnet_state.json`,
+  `EMS_DRY_RUN=false`. 🚀 card confirms `testnet=False dry_run=False risk $3.0`.
+- Armed and waiting at **Stage 1** (H4 bull, H1 below ema50) — first real mainnet trade
+  fires when H1 reclaims ema50 + a fresh M30 cross. $3 risk, 10-loss/day kill = −$30 max/day.
+
+---
+
+## Previous Session Summary — verified the fixes in dry-run, ARMED testnet
 
 No code changes — verification + arming only.
 - **Reconciled "several trades this week" against on-chain reality.** Queried HL fills
@@ -22,7 +52,7 @@ No code changes — verification + arming only.
 
 ---
 
-## Previous Session Summary — two live-execution bugs fixed (sizing + entry timing)
+## Earlier Session Summary — two live-execution bugs fixed (sizing + entry timing)
 
 Two real bugs on the live-money path, both found, fixed, and adversarially reviewed.
 
@@ -53,7 +83,7 @@ proves `check_entry_live(i)` selects the identical trades as backtest `check_ent
 
 ---
 
-## Earlier Session Summary — step-by-step ladder notifications + daily heartbeat
+## Older Session Summary — step-by-step ladder notifications + daily heartbeat
 
 Telegram-notification UX work on the live bot (already deployed + soaking).
 - **Step-by-step ladder** (`fdfe51b`, new default `EMS_STATUS_MODE=steps`) — top-down
@@ -75,7 +105,7 @@ Telegram-notification UX work on the live bot (already deployed + soaking).
 
 ---
 
-## Older Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
+## Oldest Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
 
 The EMS-V3 bot is now **running autonomously on Render** (testnet, `dry_run=True`,
 no orders). Drove the Blueprint deploy via watch-and-guide (Claude sees via
@@ -128,40 +158,46 @@ healthcheck `https://hc-ping.com/27d79596-d668-44e4-b8c8-991f6912ee9c`.
 
 ## Currently Working On
 
-**ARMED on testnet — waiting for the FIRST real autonomous trade.** `EMS_DRY_RUN=false`
-(🚀 card confirms `dry_run=False`). Nothing mid-flight; execution path verified in dry-run.
-Next fresh M30 cross while H4✅ H1✅ → a real testnet fill.
-- Render worker `ems-live-bot`, kill switch **10 losses/day**, risk $20, **auto-leverage**
-- Testnet/master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$998 USDC in SPOT** =
-  the trading margin (Unified Account backs perp off spot — verified by a live fill).
-- Agent `ems-bot` authorized (testnet only); sizing/leverage/guards all env-tunable.
-- Mainnet: 9.8 USDC in spot; agent NOT authorized on mainnet. For Phase 5, deposit more
-  or drop `EMS_RISK_USD` (auto-leverage handles the rest).
-- Local run: `python -m ems_live.run once` / `python -m ems_live.run`
+**LIVE ON MAINNET (real money) — waiting for the first real mainnet trade.** Render worker
+`ems-live-bot`: `HL_TESTNET=false`, `EMS_DRY_RUN=false`, **risk $3/trade**, kill 10 losses/day,
+`EMS_STATE_PATH=/data/ems_mainnet_state.json`. 🚀 card confirms `testnet=False dry_run=False
+risk $3.0`.
+- Master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$328 USDC in SPOT** = the margin
+  (Unified Account backs perp off spot).
+- Mainnet agent **`ems-bot-main`** `0xc07aA2354249ba34D7a4436fEDEC6864Dd07b8Fd` authorized
+  (~180 days; re-authorize before it lapses). Key in Render env only, trade-only (no withdraw).
+- Auto-leverage: at $3 risk on $328, a 1% stop → 2×, tight stops → higher lev, all liq-safe.
+- Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker now points at mainnet.
+- Currently **Stage 1** (H4 bull, H1 below ema50) — no trade until H1 reclaims ema50 + M30 cross.
 
-**When the first real trade fires (🟢 ENTRY with NO 🟡 DRY_RUN line):** pull the on-chain
-fill for `0x18ce…6964` on testnet and confirm entry px, resting stop order, size, and
-auto-leverage match the card. That's the end-to-end execution proof still outstanding.
+**When the FIRST real mainnet trade fires (🟢 ENTRY, no 🟡):** pull the on-chain fill for
+`0x18ce…6964` on MAINNET and confirm entry/stop/size/leverage match the card. Expect tight
+fills (deep book — none of the testnet slippage). That's the mainnet execution proof.
+
+**First testnet trade already verified** (2026-07-12): correct end-to-end; −1.19R was testnet
+thin-book slippage. See Last Session Summary.
 
 ---
 
 ## Parked / Unfinished
 
-**EMS live bot — DEPLOYED & LIVE on testnet (dry_run); remaining = soak + mainnet:**
-- **Staged edge-robustness (from the 63-scenario audit, not blocking common trades):**
-  in-bar retries for a transient Binance/HL feed error (else the crossover bar is lost);
-  SL-adapt fallback to the Binance stop (basis-adjusted) when HL candles are empty; tz
-  hardening in sl_adapter; spot→perp transfer for a Unified Account with collateral only
-  in spot; feasibility/no-retry on a single-bar refusal. Full list: audit output
-  `tasks/wbwomb00s.output`.
+**EMS live bot — LIVE ON MAINNET; open refinements (none blocking):**
+- **SL exit records the TRIGGER price, not the actual fill** — so the exit card + day-ledger
+  under-report a slipped stop (testnet showed −1.19R real vs −1.00R booked; mainnet slippage
+  is small). Fix: read the real SL fill price for the exit record + deviation + kill-switch.
+  (Highest-value refinement now that it's real money.)
+- **IN-POS card throttle (optional)** — fires once per H1 close; user may want it only on a
+  big R move or near the exit trigger (a long hold = many cards).
+- **Staged edge-robustness (63-scenario audit, not blocking common trades):** in-bar retries
+  for a transient Binance/HL feed error; SL-adapt fallback to the basis-adjusted Binance stop
+  when HL candles are empty; tz hardening in sl_adapter; feasibility/no-retry on a single-bar
+  refusal. Full list: audit output `tasks/wbwomb00s.output`.
 - **Missed-bar catch-up on restart** — if down across a `:30` H1-exit bar, that exit is
   skipped (stop still rests on exchange, so protected).
-- **Phase 5: mainnet.** Deposit real USDC or set tiny `EMS_RISK_USD`, flip HL_TESTNET=false,
-  spot→perp in UI, mainnet dry-run first, then arm. Auto-leverage makes risk exact.
-- **Slippage in deviation** — EXIT deviation is fee-only; fold in real fill slippage.
 
-DONE (no longer parked): Render deploy (LIVE), monitoring (Telegram+healthchecks),
-count-based kill switch, per-tick reconcile, entrypoint, unbuffered logs, 451 fix.
+DONE (no longer parked): mainnet go-live, Render deploy, monitoring, count kill switch,
+per-tick reconcile, entrypoint, unbuffered logs, 451 fix, equity-relative auto-leverage,
+entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer needed).
 
 **EMS engine (pre-existing):**
 - Parity check vs TradingView Pine strategy report

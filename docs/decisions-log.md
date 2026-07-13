@@ -4,6 +4,27 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-07-13
+
+**Went LIVE on mainnet at $3 risk after verifying the first testnet execution**
+The first real testnet trade (2026-07-12) executed correctly end-to-end (on-time entry,
+resting structural stop triggered, position closed), confirming both the auto-leverage
+sizing and entry-timing fixes on-chain. The −1.19R (vs −1.00R) was testnet thin-book
+slippage, which mainnet's deep book largely removes — so testnet-vs-mainnet execution
+quality favors mainnet, and the go/no-go was made on that basis. Funded ~$328, authorized
+a dedicated MAINNET agent (`ems-bot-main`, trade-only, ~180d), and armed with
+`EMS_RISK_USD=3` and a mainnet-specific `EMS_STATE_PATH` so testnet history doesn't bleed
+into the live ledger. Risk sized to the account: $3/trade ≈ 1%, 10-loss/day kill = −$30.
+
+**Known reporting gap accepted for go-live: SL exits book the trigger price, not the fill**
+The bot records a stopped exit at the SL trigger (clean −1.00R) rather than the actual
+(possibly slipped) fill, so realized P&L/ledger/deviation slightly understate a slipped
+stop. Accepted as non-blocking for mainnet (deep-book slippage is small) but flagged as
+the top refinement now that it's real money — the fix reads the real SL fill for the
+exit record so P&L and the kill switch reflect reality.
+
+---
+
 ## 2026-07-10
 
 **Testnet Unified Account: spot USDC is the perp trading margin — no transfer needed**
