@@ -28,6 +28,15 @@ slippage (~$2.75 on that trade). Fix = read the real SL fill for the exit record
 - Armed and waiting at **Stage 1** (H4 bull, H1 below ema50) — first real mainnet trade
   fires when H1 reclaims ema50 + a fresh M30 cross. $3 risk, 10-loss/day kill = −$30 max/day.
 
+**UPDATE — first mainnet trade fired and WON (verified on-chain).** Trade #1 (07-14 13:00
+→ 07-16 10:00, ~45h, H1_EMA100 exit): open 63,799 → close 64,079, 0.00294 BTC. Price P&L
++$0.82, fees −$0.16, **funding −$0.11** (45 hourly payments over the hold) → **real net +$0.55**.
+The exit card showed +$0.69 / +0.23R net (**fee-only — funding not included**) and a −19.8%
+deviation, which is just **fees as a % of a small +0.28R win** (fee ≈0.054R fixed by the
+~1.6% stop; against a small R it's a big %, against +2R it'd be ~3%). Deep-book fills were
+tight (no testnet slippage). A **2nd trade is currently OPEN** (07-17 20:00, 0.01626 BTC @
+64,054). User declined adding funding to the card for now — left as a refinement.
+
 ---
 
 ## Previous Session Summary — verified the fixes in dry-run, ARMED testnet
@@ -170,22 +179,24 @@ risk $3.0`.
 - Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker now points at mainnet.
 - Currently **Stage 1** (H4 bull, H1 below ema50) — no trade until H1 reclaims ema50 + M30 cross.
 
-**When the FIRST real mainnet trade fires (🟢 ENTRY, no 🟡):** pull the on-chain fill for
-`0x18ce…6964` on MAINNET and confirm entry/stop/size/leverage match the card. Expect tight
-fills (deep book — none of the testnet slippage). That's the mainnet execution proof.
+**Mainnet execution PROVEN:** trade #1 closed a verified win (real net +$0.55 after fees +
+funding); a 2nd trade is currently open. Deep-book fills tight. Just let it run + watch
+Telegram; to check any trade, pull on-chain fills + `userFunding` for `0x18ce…6964` on MAINNET.
 
-**First testnet trade already verified** (2026-07-12): correct end-to-end; −1.19R was testnet
-thin-book slippage. See Last Session Summary.
+Reconciliation gotchas learned: the exit card is **fee-only** (excludes funding — matters on
+long holds, e.g. −$0.11 over 45h) and books SL exits at the trigger, not the fill. Deviation%
+is inflated on small-R trades (fee is a big % of a small move) — read the $ not the %.
 
 ---
 
 ## Parked / Unfinished
 
 **EMS live bot — LIVE ON MAINNET; open refinements (none blocking):**
-- **SL exit records the TRIGGER price, not the actual fill** — so the exit card + day-ledger
-  under-report a slipped stop (testnet showed −1.19R real vs −1.00R booked; mainnet slippage
-  is small). Fix: read the real SL fill price for the exit record + deviation + kill-switch.
-  (Highest-value refinement now that it's real money.)
+- **Exit card is fee-only — add funding + actual SL fill.** Two accuracy gaps now that it's
+  live: (a) SL exits book the TRIGGER price, not the actual fill (under-reports a slipped
+  stop); (b) net P&L/deviation EXCLUDE perp funding, which is real on long holds (−$0.11 over
+  45h on trade #1). Fix: read the real SL fill for the exit record AND pull `userFunding` for
+  the hold window so the card/ledger show true net. Highest-value refinement now real money.
 - **IN-POS card throttle (optional)** — fires once per H1 close; user may want it only on a
   big R move or near the exit trigger (a long hold = many cards).
 - **Staged edge-robustness (63-scenario audit, not blocking common trades):** in-bar retries

@@ -4,6 +4,21 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-07-17
+
+**First mainnet trades reconciled: card P&L is fee-only; deviation% misleads on small R**
+Trade #1 (mainnet, ~45h hold) closed a real +$0.55 win, but exposed two reporting facts to
+keep in mind: (1) the exit card's net P&L/deviation are **fee-only** — they exclude perp
+**funding**, which was −$0.11 over the 45h hold and is real on long holds; (2) the deviation%
+metric is **inflated for small-R trades** because the ~fixed per-trade fee (≈0.05R at a ~1.6%
+stop) is a large fraction of a small win (−19.8% on a +0.28R exit) but a tiny fraction of a
+big one — so read the **dollar** cost, not the %, on small trades. Decision: leave the card
+as-is for now (user opted not to add funding yet), but the funding + actual-SL-fill additions
+are the top reporting refinement (see handoff Parked). Deep-book mainnet fills were tight (no
+testnet-style slippage), validating the testnet→mainnet execution-quality expectation.
+
+---
+
 ## 2026-07-13
 
 **Went LIVE on mainnet at $3 risk after verifying the first testnet execution**
