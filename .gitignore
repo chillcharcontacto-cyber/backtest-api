@@ -6,6 +6,7 @@ __pycache__/
 
 # Data caches (re-fetchable parquet)
 data/
+data_now/
 
 # Worktrees
 .claude/worktrees/
