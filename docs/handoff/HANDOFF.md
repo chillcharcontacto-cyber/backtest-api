@@ -1,6 +1,50 @@
 # Handoff
 
-## Last Session Summary — first testnet trade verified; WENT LIVE ON MAINNET 🎯
+## Last Session Summary — mainnet trade #2 (a loss) reconciled + H1-intrabar variation tested & REJECTED
+
+**Live account reconciled (read-only). Bot is FLAT; 2 mainnet trades done, net −$3.10.**
+
+| # | in → out | hold | price P&L | fees | real net |
+|---|---|---|---|---|---|
+| 1 | 63,799 → 64,079 | 45h | +$0.82 (+0.28R) | −$0.16 | **+$0.55** |
+| 2 | 64,054 → 63,887 | 3h | −$2.72 (−0.90R) | −$0.90 | **−$3.61** |
+
+Equity **$328.06 → $324.96** (−1%). Funding over the window −$0.14 (48 events).
+Trade #2 exited 23:11 (mid-bar, *above* its stop) → the resting stop triggered on a wick and
+**filled better than −1R** (−0.90R). Execution is healthy; no defect.
+
+⚠️ **Live data exposed a real cost: fee drag scales inversely with stop width.** Because
+`notional = risk / stop%`, a tight stop means a huge notional and therefore huge fees
+*relative to risk*. Trade #2 (**0.29% stop**) paid **$0.90 = 0.30R in fees**; trade #1
+(1.6% stop) paid only 0.05R. Formula: `fee_R = 0.09 / stop%` at HL's 0.09% round-trip taker.
+Median stop across the backtest is 0.82% → typical fee ≈ 0.14R. Not yet acted on — see
+Next Steps #1.
+
+**Tested a user-proposed variation → REJECTED on the numbers (`e8ee4d7`, `29778b3`).**
+Question: must the M30 cross wait for an H1 candle to *close* above EMA50 (locked model = yes),
+or should it fire as soon as price is above EMA50 intrabar? Built
+`scripts/variation_h1_intrabar.py` — only the price compared against EMA50 changes (the EMA
+level itself is the last closed H1's in both, since EMAs update on close); every other gate
+identical. Data refreshed through **2026-07-21** (previous CSVs stopped 05-12).
+
+| | trades | EV | net EV¹ | net total | net maxDD |
+|---|---|---|---|---|---|
+| **V3 locked** | 498 | +0.960R | **+0.823R** | **+409.9R** | −42.9R |
+| V3 intrabar | 518 | +0.917R | +0.779R | +403.6R | −41.4R |
+
+¹net of real HL fees, `fee_R = 0.09/stop%`
+
+**Why it loses — displacement, not signal quality.** 492 trades are byte-identical. The
+variation adds 26 weak trades (+0.269R net EV) and **loses 6 of the baseline's biggest
+winners** (+2.222R net EV) — entering intrabar occupies the single position slot, so the
+better signal an hour later gets skipped. Net −6.3R over 9 years. **Locked model retained;
+the live bot was not touched.**
+
+CSVs (repo root + Desktop): `trades_v3_h1intrabar_to_now.csv`, `trades_v3_locked_to_now.csv`.
+
+---
+
+## Previous Session Summary — first testnet trade verified; WENT LIVE ON MAINNET 🎯
 
 No code changes — verification + mainnet go-live.
 
@@ -39,7 +83,7 @@ tight (no testnet slippage). A **2nd trade is currently OPEN** (07-17 20:00, 0.0
 
 ---
 
-## Previous Session Summary — verified the fixes in dry-run, ARMED testnet
+## Earlier Session Summary — verified the fixes in dry-run, ARMED testnet
 
 No code changes — verification + arming only.
 - **Reconciled "several trades this week" against on-chain reality.** Queried HL fills
@@ -61,7 +105,7 @@ No code changes — verification + arming only.
 
 ---
 
-## Earlier Session Summary — two live-execution bugs fixed (sizing + entry timing)
+## Session — two live-execution bugs fixed (sizing + entry timing)
 
 Two real bugs on the live-money path, both found, fixed, and adversarially reviewed.
 
@@ -92,7 +136,7 @@ proves `check_entry_live(i)` selects the identical trades as backtest `check_ent
 
 ---
 
-## Older Session Summary — step-by-step ladder notifications + daily heartbeat
+## Session — step-by-step ladder notifications + daily heartbeat
 
 Telegram-notification UX work on the live bot (already deployed + soaking).
 - **Step-by-step ladder** (`fdfe51b`, new default `EMS_STATUS_MODE=steps`) — top-down
@@ -114,7 +158,7 @@ Telegram-notification UX work on the live bot (already deployed + soaking).
 
 ---
 
-## Oldest Session Summary — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
+## Session — Bot DEPLOYED & LIVE on Render + full monitoring 🟢
 
 The EMS-V3 bot is now **running autonomously on Render** (testnet, `dry_run=True`,
 no orders). Drove the Blueprint deploy via watch-and-guide (Claude sees via
@@ -179,19 +223,38 @@ risk $3.0`.
 - Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker now points at mainnet.
 - Currently **Stage 1** (H4 bull, H1 below ema50) — no trade until H1 reclaims ema50 + M30 cross.
 
-**Mainnet execution PROVEN:** trade #1 closed a verified win (real net +$0.55 after fees +
-funding); a 2nd trade is currently open. Deep-book fills tight. Just let it run + watch
-Telegram; to check any trade, pull on-chain fills + `userFunding` for `0x18ce…6964` on MAINNET.
+**Mainnet execution PROVEN over 2 closed trades (1 win, 1 loss).** Trade #1 +$0.55 real net;
+trade #2 −$3.61 (stop triggered on a wick and filled *better* than −1R, at −0.90R). Bot is
+**FLAT** as of 2026-07-21, equity **$324.96**. Deep-book fills tight both times. Just let it
+run + watch Telegram; to check any trade, pull on-chain fills + `userFunding` for
+`0x18ce…6964` on MAINNET.
 
 Reconciliation gotchas learned: the exit card is **fee-only** (excludes funding — matters on
 long holds, e.g. −$0.11 over 45h) and books SL exits at the trigger, not the fill. Deviation%
 is inflated on small-R trades (fee is a big % of a small move) — read the $ not the %.
+**Fee drag is inversely proportional to stop width** (`fee_R = 0.09/stop%`): a 0.29% stop
+costs 0.30R in fees, a 1.6% stop only 0.05R. Live-confirmed on trade #2.
+
+**Model is settled — do not re-litigate without new data.** The H1-intrabar variation was
+tested this session and rejected (see Last Session Summary). Waiting for the H1 *close* is
+load-bearing: it protects the single position slot for the biggest winners.
 
 ---
 
 ## Parked / Unfinished
 
 **EMS live bot — LIVE ON MAINNET; open refinements (none blocking):**
+- **Fee-drag study → possibly raise `min_risk_pct`.** Live trade #2 paid 0.30R in fees on a
+  0.29% stop. `fee_R = 0.09/stop%`, so sub-0.5% stops cost >0.18R each. Open question: does
+  filtering out the tightest stops raise *net* EV, or are those trades net-positive anyway?
+  The harness in `scripts/variation_h1_intrabar.py` already computes net-of-fee EV per bucket
+  — sweep `min_risk_pct` over e.g. 0.1/0.3/0.5/0.75/1.0% and compare netEV/netTotal/netDD.
+  Careful: raising it also removes trades, so judge on net total R and DD, not EV alone.
+- **H1-intrabar variation — TESTED AND REJECTED (2026-07-21), do not redo.** Result and
+  reasoning in the Last Session Summary. One follow-up never run: test the 26 intrabar-only
+  signals as an *additive* entry that fires **only when flat**, which removes the displacement
+  cost and isolates whether those signals have standalone edge (+0.269R net EV suggests weak
+  but positive).
 - **Exit card is fee-only — add funding + actual SL fill.** Two accuracy gaps now that it's
   live: (a) SL exits book the TRIGGER price, not the actual fill (under-reports a slipped
   stop); (b) net P&L/deviation EXCLUDE perp funding, which is real on long holds (−$0.11 over
@@ -227,25 +290,28 @@ entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer 
 
 ---
 
-## Next Steps — bot is LIVE on testnet; now SOAK then mainnet
+## Next Steps — bot is LIVE on mainnet and settled; work is now analysis + reporting
 
-⭐ **USER REMINDER (next session):** start tracking the EMS indicator on **GU (GBP/USD)
-from Jan 5th** onward, and keep tracking the indicator. (User's words: "get it from
-jan 5th on GU and keep tracking the indicator" — clarify exact intent: forward-track
-the live indicator on GBPUSD, and/or backtest GBPUSD from 2026-01-05.)
+Deploy/arm/mainnet steps are all DONE. Nothing is blocking; the bot runs unattended.
 
-1. **Soak (now, passive).** Let it run dry on testnet. Watch Telegram for the
-   step-by-step ladder (🟠/🟡 step cards on gate flips, daily 😴 heartbeat), and the
-   first 🟢 ENTRY → 🔵 in-pos → 🔴/🔻 EXIT cycle when the 3 gates align. Cross-check
-   that cycle against the Hyperliquid testnet UI (Positions / Trade History / Funding
-   History). Goal: ≥1 real autonomous trade end-to-end.
-2. **ARM testnet** — when you trust it, worker → Environment → `EMS_DRY_RUN=false` →
-   Save. Real testnet orders fire on the next aligned signal.
-3. **Mainnet prep** — fix capital first: 9.8 USDC can't support risk $20; deposit more
-   or drop `EMS_RISK_USD` to ~$1–2. Funding/swap cost is real only on mainnet — watch
-   Funding History (or build the historical-funding filter — parked).
-4. **Phase 5 mainnet** — flip HL_TESTNET=false, transfer real USDC spot→perp in the UI,
-   one mainnet dry-run, then arm.
+⭐ **USER REMINDER (outstanding 2 sessions now):** start tracking the EMS indicator on
+**GU (GBP/USD) from Jan 5th** onward, and keep tracking it. (User's words: "get it from
+jan 5th on GU and keep tracking the indicator".) **Ask what they mean before building**:
+forward-track the live indicator on GBPUSD, and/or backtest GBPUSD from 2026-01-05?
+Note GU is **forex → Twelve Data** (`TWELVEDATA_API_KEY`), not the Binance/crypto feed,
+so this needs a new data path in the EMS stack.
 
-Verify after any redeploy: 🚀 card reads `kill 10 losses/day`; step/heartbeat cards
-have real data (no TICK ERROR).
+1. **Fee-drag study (recommended first).** Sweep `min_risk_pct` (0.1/0.3/0.5/0.75/1.0%)
+   and compare **net** EV / total R / maxDD after `fee_R = 0.09/stop%`. Motivated by live
+   trade #2 burning 0.30R on a 0.29% stop. Decide from net total R + DD, not EV.
+2. **Exit-card accuracy** — fold **funding** + the **actual SL fill** into the exit record
+   so the card, deviation %, and the kill-switch ledger reflect true net. Highest-value
+   *reporting* fix now that it's real money.
+3. **Optional:** test the 26 intrabar-only signals as an additive entry that fires only
+   when flat (isolates their standalone edge without the displacement cost).
+4. **Passive, ongoing:** let it run, watch Telegram, reconcile each closed trade on-chain
+   (fills + `userFunding` for `0x18ce…6964`, MAINNET).
+
+Verify after any redeploy: 🚀 card reads `testnet=False dry_run=False risk $3.0` and
+`kill 10 losses/day`; step/heartbeat cards have real data (no TICK ERROR).
+Re-authorize the mainnet agent before its ~180-day expiry (authorized 2026-07-13).

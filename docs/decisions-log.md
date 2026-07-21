@@ -4,6 +4,39 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-07-21
+
+**H1 trend filter keeps the wait-for-close requirement — intrabar variation REJECTED**
+Tested taking the M30 cross as soon as price is above the H1 EMA50, instead of requiring the
+last H1 candle to have CLOSED above it (`scripts/variation_h1_intrabar.py`, data through
+2026-07-21). Net of real HL fees the locked model wins: **+409.9R vs +403.6R** (netEV +0.823R
+vs +0.779R) across 9 years. The mechanism matters more than the size of the gap: 492 of the
+trades are byte-identical, and the variation's 26 extra trades are weak (+0.269R net EV) while
+it **loses 6 of the baseline's biggest winners** (+2.222R net EV). Entering intrabar fills the
+single position slot early, so the stronger signal an hour later gets skipped — a
+**displacement** cost, not a signal-quality difference. Conclusion: waiting for the H1 close is
+load-bearing (it rations a scarce position slot toward higher-quality setups), so the locked V3
+stands and the live bot was not modified. Follow-up left open: test those 26 signals as an
+additive entry that fires only when flat, which would isolate their standalone edge.
+
+**Fee drag is inversely proportional to stop width — a real, live-confirmed cost**
+Because fixed-$ risk implies `notional = risk / stop%`, a tighter stop mechanically means a
+larger notional and therefore larger fees *relative to risk*: `fee_R = 0.09 / stop%` at HL's
+0.09% round-trip taker. Mainnet trade #2 (0.29% stop) paid $0.90 = **0.30R** in fees, versus
+0.05R for trade #1's 1.6% stop. Decision: adopt `fee_R = 0.09/stop%` as the standard cost line
+in all EMS analysis (the older flat 0.20% round-trip assumption was conservative by comparison),
+and open a study on whether raising `min_risk_pct` to filter the tightest stops improves net
+EV — deliberately NOT changing the live parameter until that study is run, since raising it also
+removes trades and must be judged on net total R and drawdown, not EV alone.
+
+**Backtest CSVs must be regenerated to the actual current date, not a hardcoded one**
+The variation run initially hardcoded an end date a few days stale, silently cutting the
+"until now" CSVs short. Caught and refetched. Rule going forward: any "to now" export states
+its true data range in the output, and the range gets verified against the real current date
+before the numbers are reported.
+
+---
+
 ## 2026-07-17
 
 **First mainnet trades reconciled: card P&L is fee-only; deviation% misleads on small R**
