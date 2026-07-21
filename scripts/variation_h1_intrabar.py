@@ -32,7 +32,7 @@ from ems_live.decider import build_ctx, check_sl_hit, check_h1_exit
 MADRID = "Europe/Madrid"
 SYMBOL = "BTCUSDT"
 START = "2017-08-17"
-END = "2026-07-19"          # through "now"
+END = "2026-07-22"          # through "now"
 DATA_DIR = "data_now"        # separate cache so the old one isn't clobbered
 
 
