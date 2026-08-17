@@ -1,0 +1,63 @@
+# Render background-worker template for a live trading bot.  [DEPLOY LAYER]
+# Add this `worker` block to the new bot's render.yaml. Key points that make it
+# behave EXACTLY like the EMS worker:
+#   * type: worker           -> no HTTP port; a long-running process
+#   * disk mounted at /data  -> position + day-ledger + status JSON survive redeploys
+#   * PYTHONUNBUFFERED=1      -> print() streams to Render logs live (no buffering)
+#   * every secret is sync:false -> set in the Render dashboard, NEVER committed
+#
+# Then, in the Render dashboard, ALSO enable native alerts:
+#   Settings → Notifications → deploy-failed + service-crash → your email.
+#   (healthchecks.io catches HANGS; Render native catches CRASHES/deploy fails.)
+
+services:
+  - type: worker
+    name: ctrader-live-bot           # rename
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m your_bot.run   # rename to your entrypoint module
+    disk:
+      name: bot-state
+      mountPath: /data               # persists state across deploys — REQUIRED
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+      # --- run mode ---
+      - key: BOT_TESTNET
+        value: "true"                # cTrader: point at a DEMO account first
+      - key: BOT_DRY_RUN
+        value: "true"                # SAFE: compute+log, no orders. Flip to "false" to ARM.
+      - key: BOT_RISK
+        value: "3"                   # risk per trade in account currency
+      - key: BOT_MAX_DAILY_LOSSES
+        value: "10"                  # kill switch: halt after N losing trades / UTC day
+      - key: BOT_MAX_DAILY_LOSS_R
+        value: "0"                   # R-based cap off (count-based is primary)
+      - key: BOT_STATUS_MODE
+        value: "steps"               # step-ladder + daily heartbeat
+      - key: BOT_STATE_PATH
+        value: /data/bot_state.json  # on the persistent disk
+
+      # --- cTrader Open API secrets (set in dashboard; sync:false = never committed) ---
+      - key: CTRADER_CLIENT_ID
+        sync: false
+      - key: CTRADER_CLIENT_SECRET
+        sync: false
+      - key: CTRADER_ACCESS_TOKEN
+        sync: false                  # OAuth token — EXPIRES; refresh before it lapses
+      - key: CTRADER_REFRESH_TOKEN
+        sync: false
+      - key: CTRADER_ACCOUNT_ID
+        sync: false                  # ctidTraderAccountId
+
+      # --- monitoring (optional; each no-ops if unset) ---
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false                  # from @BotFather
+      - key: TELEGRAM_CHAT_ID
+        sync: false                  # your trade-follow channel/chat id
+      - key: HEALTHCHECK_URL
+        sync: false                  # healthchecks.io ping URL (dead-man's switch)
