@@ -6,6 +6,44 @@ A running list of architectural and product decisions, newest first.
 
 ## 2026-07-21
 
+**A live trading bot needs 5 ops layers, not 2 — extracted them as a portable `ops_kit/`**
+When scoping "the same monitoring as EMS" for a second bot, named the full operational
+surface so the copy isn't half-safe: (1) liveness (dead-man's-switch ping + host crash
+alerts), (2) observability (Telegram trade cards), (3) risk (daily-loss kill switch),
+(4) state & recovery (atomic JSON on a persistent disk + boot reconcile vs broker truth),
+(5) execution safety (save-state-before-stop, never orphan an unprotected position, size
+off actual fills). "Heartbeat + Telegram" is only layers 1–2; the forgotten 3–5 are what
+make a bot safe to leave alone with money. Decision: package the venue-agnostic parts of
+`ems_live/` as a reusable `ops_kit/` (daylimit, position, monitor senders, the loop, a
+broker Protocol, render worker template, and a PORT_BRIEF) rather than re-describing them
+in prose each time. The kit lives in backtest-api as the canonical source; other bots copy
+it and implement only the broker seam. Rationale: reference code the receiving session
+adapts beats a spec it has to reverse-engineer, and it forces parity with a system already
+running real money.
+
+**Port to a new venue = implement one broker Protocol; everything else is reused**
+Chose a single adaptation seam (`ops_kit/broker_protocol.py`) as the only venue-specific
+surface. The loop, reconcile, kill switch, and monitoring never import a venue SDK — they
+only call the Protocol's methods. Consequence for cTrader (swing-bot): its equity-relative
+AUTO-LEVERAGE (a Hyperliquid-perp concept) does NOT port — cTrader leverage is broker-set
+and there's no per-order liquidation price, so `plan_trade`'s liq math is dropped and
+replaced with plain forex volume-from-risk sizing; `update_leverage`/`set_margin_mode`
+become no-ops. Costs on the exit card become commission + swap instead of taker fee +
+funding. The generic `fmt_exit` was given a `swap` parameter up front so the new bot is
+truthful about overnight cost from day 1 — a gap EMS's own card still has.
+
+**swing-bot integration is a MERGE, not a greenfield build**
+Inspected swing-bot before handing off: it already has the cTrader broker + OAuth +
+token_refresh, sizing, dry_run, and state+reconcile under `live/`. The verified gaps
+(0 files) are Telegram, healthchecks, and a daily kill switch — plus its render.yaml has
+no persistent disk, so its existing state code is wiped on every redeploy (a latent bug).
+Decision: instruct the swing-bot session to MERGE the missing layers into its existing
+`live/runner.py` and add a persistent disk, NOT to rebuild the broker/state it already has,
+and to reconcile its state machine against `ops_kit/position.py`'s 4-case matrix. Rationale:
+telling it to "build the whole thing" would have it duplicate or fight working code.
+
+---
+
 **H1 trend filter keeps the wait-for-close requirement — intrabar variation REJECTED**
 Tested taking the M30 cross as soon as price is above the H1 EMA50, instead of requiring the
 last H1 candle to have CLOSED above it (`scripts/variation_h1_intrabar.py`, data through

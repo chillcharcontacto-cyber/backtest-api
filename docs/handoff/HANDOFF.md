@@ -1,6 +1,6 @@
 # Handoff
 
-## Last Session Summary — mainnet trade #2 (a loss) reconciled + H1-intrabar variation tested & REJECTED
+## Last Session Summary — mainnet reconciled + H1-intrabar variation REJECTED + ops_kit shipped for the swing-bot
 
 **Live account reconciled (read-only). Bot is FLAT; 2 mainnet trades done, net −$3.10.**
 
@@ -41,6 +41,35 @@ better signal an hour later gets skipped. Net −6.3R over 9 years. **Locked mod
 the live bot was not touched.**
 
 CSVs (repo root + Desktop): `trades_v3_h1intrabar_to_now.csv`, `trades_v3_locked_to_now.csv`.
+
+**Shipped `ops_kit/` — the EMS monitoring+safety system, packaged to port to a 2nd bot
+(`d59c53d`).** The user is automating another Render bot (**swing-bot**, RD3I USDJPY on a
+**cTrader** account) and asked for "the same monitoring." Surfaced that "heartbeat +
+Telegram" is only 2 of **5 ops layers**; the real gaps are risk/state/execution-safety.
+`ops_kit/` (10 files, 845 lines, at this repo's root) extracts the venue-agnostic parts:
+- **Verbatim, zero coupling:** `daylimit.py` (kill switch), `position.py` (state + boot
+  reconcile 4-case matrix), `monitor.py` (Telegram + healthchecks senders + generic
+  cards), `loop.py` (run_forever: reconcile→sleep+ping→tick→repeat, "one bad tick never
+  kills the worker").
+- **The seam:** `broker_protocol.py` — the exact method surface the loop calls; implement
+  once per venue, reuse everything else.
+- **Deploy + brief:** `render.worker.yaml`, `.env.example`, and `PORT_BRIEF.md` (the
+  handover doc: verbatim-vs-adapt table, cTrader specifics, build order, 8-point
+  acceptance checklist). `monitor.fmt_exit` already carries a swap/funding line — closing
+  the gap EMS's own exit card still has. Generic modules smoke-tested (kill switch,
+  reconcile, formatters, scheduler math). Nothing in `ems_live/` touched.
+
+**Delivered it to swing-bot (a MERGE, not greenfield).** swing-bot
+(`chillcharcontacto-cyber/swing-bot`, local `…/TradingEdgeLabs/strategies/swing`, branch
+`main`) already has the cTrader broker + OAuth + `token_refresh`, `sizing.py`, `dry_run`,
+`state` (4 files) and `reconcile` (2 files). Verified the genuine gaps (0 files reference
+them): **Telegram, healthchecks, daily kill switch**, and **no persistent disk in its
+render.yaml → state wiped on every redeploy** (a latent bug). Copied `ops_kit/` into the
+swing repo (uncommitted), gave a merge-aware build prompt, and handed off to the swing-bot
+Claude session, which confirmed its cwd + that `ops_kit/PORT_BRIEF.md` is present
+(12042 bytes, byte-identical) and is proceeding read-before-wire. Note broker exposes
+`open_positions()` (plural/list) vs the contract's `open_position()` (None|dict) — small
+shape adapt flagged.
 
 ---
 
@@ -239,6 +268,12 @@ costs 0.30R in fees, a 1.6% stop only 0.05R. Live-confirmed on trade #2.
 tested this session and rejected (see Last Session Summary). Waiting for the H1 *close* is
 load-bearing: it protects the single position slot for the biggest winners.
 
+**`ops_kit/` shipped here; the swing-bot merge runs in that repo's own session.** For
+backtest-api nothing is mid-flight — `ops_kit/` is the canonical source of the shared ops
+tooling and is done. The actual integration (adding Telegram + healthchecks + kill switch +
+a persistent disk into swing-bot's `live/`) is being done by the swing-bot Claude session,
+tracked in swing-bot's own handoff, not here. This repo just hosts the kit.
+
 ---
 
 ## Parked / Unfinished
@@ -311,6 +346,11 @@ so this needs a new data path in the EMS stack.
    when flat (isolates their standalone edge without the displacement cost).
 4. **Passive, ongoing:** let it run, watch Telegram, reconcile each closed trade on-chain
    (fills + `userFunding` for `0x18ce…6964`, MAINNET).
+5. **swing-bot ops merge (cross-repo, low-touch here):** the swing-bot session is wiring
+   `ops_kit/` in. If the user asks about it from THIS repo, the kit source is `ops_kit/`
+   + `PORT_BRIEF.md`; the real gaps it fills there are Telegram + healthchecks + kill
+   switch + a persistent disk. If `ops_kit/` itself needs a fix, patch it here (canonical)
+   and the user re-copies. Don't do swing-bot's integration from this session.
 
 Verify after any redeploy: 🚀 card reads `testnet=False dry_run=False risk $3.0` and
 `kill 10 losses/day`; step/heartbeat cards have real data (no TICK ERROR).
