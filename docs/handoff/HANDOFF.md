@@ -1,6 +1,40 @@
 # Handoff
 
-## Last Session Summary — mainnet reconciled + H1-intrabar variation REJECTED + ops_kit shipped for the swing-bot
+## Last Session Summary — risk raised $3 → $6/trade; account funded to ~$1,279; open trade verified
+
+**No code changes — a live config change + verification (~2026-08-20, a month after the
+ops_kit session below).**
+
+**Raised EMS risk per trade $3 → $6.** Done on Render (worker `ems-live-bot` →
+Environment → `EMS_RISK_USD` 3→6 → **Save and deploy** — env-var change needs a restart,
+no rebuild). Confirmation is the 🚀 card reading `risk $6.0` after redeploy. `EMS_RISK_USD`
+is read only at ENTRY sizing, so the change applies to the NEXT trade only.
+
+**Account was funded up** from ~$325 to **~$1,279** (perp $455 + spot $824), via
+Phantom → KuCoin → Arbitrum → Hyperliquid (walked the user through that route this
+session). At $6 risk on ~$1.3k, auto-leverage sizing is very comfortable; daily kill-switch
+max loss is now 10 × $6 = **−$60/day** (was −$30).
+
+**Verified the open trade on-chain (read-only).** BTC long **0.02151 @ 64,477**, resting
+**Stop Market at 64,337** (reduce-only) = confirmed **$3.01 risk** (pre-change sizing).
+With BTC at ~72,800 it was **+~$179 unrealized** (deep runner) — will exit on **H1 close <
+H1 EMA100** (price is $8k above the structural stop, so the EMA100 cross is the realistic
+exit). This trade is UNAFFECTED by the $6 change: its size/SL/stop are locked on the
+exchange + `/data`; a redeploy `OK_RESUME`s it; exit P&L is computed off stored size/entry/
+SL, not `risk_usd`. Redeploy is safe (stop rests on the exchange through the restart).
+
+Since the ops_kit session (~07-21): the bot kept trading unattended — 08-07→08-10 long
+(−$1.47), then the 08-19 long above. Running clean.
+
+⚠️ **`render.yaml` intentionally holds SAFE DEFAULTS (testnet=true, dry_run=true,
+risk=20), NOT the live values.** The live mainnet config (testnet=false, dry_run=false,
+risk=6, state=/data/ems_mainnet_state.json) lives ONLY in the Render dashboard. Do **not**
+"fix" render.yaml to the live values — a fresh blueprint sync is meant to come up safe. If
+you ever re-sync the blueprint, re-apply the mainnet dashboard overrides afterward.
+
+---
+
+## Previous Session Summary — mainnet reconciled + H1-intrabar variation REJECTED + ops_kit shipped for the swing-bot
 
 **Live account reconciled (read-only). Bot is FLAT; 2 mainnet trades done, net −$3.10.**
 
@@ -73,7 +107,7 @@ shape adapt flagged.
 
 ---
 
-## Previous Session Summary — first testnet trade verified; WENT LIVE ON MAINNET 🎯
+## Session — first testnet trade verified; WENT LIVE ON MAINNET 🎯
 
 No code changes — verification + mainnet go-live.
 
@@ -240,23 +274,23 @@ healthcheck `https://hc-ping.com/27d79596-d668-44e4-b8c8-991f6912ee9c`.
 
 ## Currently Working On
 
-**LIVE ON MAINNET (real money) — waiting for the first real mainnet trade.** Render worker
-`ems-live-bot`: `HL_TESTNET=false`, `EMS_DRY_RUN=false`, **risk $3/trade**, kill 10 losses/day,
-`EMS_STATE_PATH=/data/ems_mainnet_state.json`. 🚀 card confirms `testnet=False dry_run=False
-risk $3.0`.
-- Master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$328 USDC in SPOT** = the margin
-  (Unified Account backs perp off spot).
+**LIVE ON MAINNET (real money) — running unattended, one big trade open.** Render worker
+`ems-live-bot`: `HL_TESTNET=false`, `EMS_DRY_RUN=false`, **risk $6/trade** (raised from $3
+this session), kill 10 losses/day (= −$60/day max), `EMS_STATE_PATH=/data/ems_mainnet_state.json`.
+Verify the 🚀 card reads `risk $6.0` after the redeploy.
+- Master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$1,279 equity** (perp $455 + spot
+  $824). Funded up from ~$325 via Phantom→KuCoin→Arbitrum→HL. Unified Account backs perp off spot.
 - Mainnet agent **`ems-bot-main`** `0xc07aA2354249ba34D7a4436fEDEC6864Dd07b8Fd` authorized
-  (~180 days; re-authorize before it lapses). Key in Render env only, trade-only (no withdraw).
-- Auto-leverage: at $3 risk on $328, a 1% stop → 2×, tight stops → higher lev, all liq-safe.
-- Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker now points at mainnet.
-- Currently **Stage 1** (H4 bull, H1 below ema50) — no trade until H1 reclaims ema50 + M30 cross.
+  (~180 days from 2026-07-13; re-authorize before it lapses). Key in Render env only, trade-only.
+- **OPEN trade (as of ~08-20 wrap-up):** BTC long 0.02151 @ 64,477, resting Stop Market 64,337
+  (= the old $3 risk), +~$179 unrealized at BTC ~72.8k — a deep runner riding to the H1<EMA100
+  exit. Sized at $3 (opened before the change); the next entry sizes at $6.
+- Auto-leverage: at $6 risk on ~$1.3k, a ~1% stop → ~1×, tight stops → higher lev, all liq-safe.
+- Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker points at mainnet.
 
-**Mainnet execution PROVEN over 2 closed trades (1 win, 1 loss).** Trade #1 +$0.55 real net;
-trade #2 −$3.61 (stop triggered on a wick and filled *better* than −1R, at −0.90R). Bot is
-**FLAT** as of 2026-07-21, equity **$324.96**. Deep-book fills tight both times. Just let it
-run + watch Telegram; to check any trade, pull on-chain fills + `userFunding` for
-`0x18ce…6964` on MAINNET.
+**Mainnet execution PROVEN.** Prior closes: #1 +$0.55, #2 −$3.61, 08-07→08-10 −$1.47; current
+08-19 long deep in profit. Deep-book fills tight. Let it run + watch Telegram; to check any
+trade, pull on-chain fills + `userFunding` for `0x18ce…6964` on MAINNET.
 
 Reconciliation gotchas learned: the exit card is **fee-only** (excludes funding — matters on
 long holds, e.g. −$0.11 over 45h) and books SL exits at the trigger, not the fill. Deviation%

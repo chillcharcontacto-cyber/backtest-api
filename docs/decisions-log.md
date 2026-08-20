@@ -4,6 +4,29 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-08-20
+
+**Raised live risk per trade $3 → $6 after funding the account to ~$1,279**
+The mainnet account was funded up from ~$325 to ~$1,279 (Phantom→KuCoin→Arbitrum→HL), so
+doubled the per-trade risk from $3 to $6 (Render `EMS_RISK_USD`). Rationale: $6 on ~$1.3k
+keeps auto-leverage sizing well within liq-safe bounds, and the strategy's edge is validated
+enough (live + 9y backtest) to scale risk with the larger balance. Consequence noted: the
+count-based kill switch now caps a bad day at 10 × $6 = −$60 (was −$30). `EMS_RISK_USD` is
+read only at entry sizing, so the change applies to the NEXT trade; the open trade keeps its
+$3 sizing and exits normally. Applied via dashboard **Save and deploy** (restart to re-read
+the env; no rebuild needed since no code changed).
+
+**`render.yaml` holds SAFE DEFAULTS, not live values — dashboard is the source of truth**
+Confirmed/formalized the deploy pattern: the blueprint ships `HL_TESTNET=true`,
+`EMS_DRY_RUN=true`, `EMS_RISK_USD=20` on purpose so a fresh blueprint deploy comes up SAFE
+(testnet, no orders). The live mainnet config (testnet=false, dry_run=false, risk=6, mainnet
+state path) exists ONLY as Render dashboard overrides. Decision: do NOT sync render.yaml to
+the live values — that would make a fresh/accidental blueprint deploy go straight to mainnet
+real-money. Trade-off accepted: the repo file doesn't reflect production, so a blueprint
+re-sync requires re-applying the dashboard overrides afterward (documented in the handoff).
+
+---
+
 ## 2026-07-21
 
 **A live trading bot needs 5 ops layers, not 2 — extracted them as a portable `ops_kit/`**
