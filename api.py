@@ -317,6 +317,39 @@ def export_pinescript(config: StrategyConfig, x_api_key: Optional[str] = Header(
     )
 
 
+# --------------------------------------------------------------------------- #
+#  EMS decision brain (Tier-4 partner bots) — signed strategy oracle           #
+# --------------------------------------------------------------------------- #
+
+class BrainRequest(BaseModel):
+    license_key:     str
+    account_address: str
+    coin:            str = "BTC"
+    in_position:     bool = False
+    entry_price:     Optional[float] = None
+    sl_price:        Optional[float] = None
+    nonce:           str
+
+
+@app.post("/ems/decision", tags=["EMS Brain"])
+def ems_decision(req: BrainRequest):
+    """
+    Signed EMS V3 decision for a licensed thin client. Auth is the license key bound to
+    the caller's Hyperliquid account (NOT the backtest API key). Returns
+    {"payload": {...}, "signature": "0x..."}; the client verifies the signature, the
+    account binding, the nonce, and the expiry before acting. Strategy logic stays here.
+    """
+    import ems_brain   # lazy import: a brain issue can never break the rest of the API
+    ok, reason = ems_brain.verify_license(req.license_key, req.account_address)
+    if not ok:
+        raise HTTPException(status_code=403, detail=reason)
+    try:
+        return ems_brain.decide(req.model_dump())
+    except Exception as e:
+        # fail safe: the client treats any non-200 as "do nothing this bar"
+        raise HTTPException(status_code=503, detail=f"brain unavailable: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
