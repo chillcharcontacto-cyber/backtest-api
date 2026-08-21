@@ -8,10 +8,54 @@ Long-only. Stop is a reduce-only trigger-market order resting on the exchange,
 so the position stays protected even if the bot process dies.
 
 Rounding: BTC perp szDecimals=5 -> size to 5 dp; perp price decimals = 6 - szDecimals.
+
+Resilience: every Hyperliquid API call goes through _retry(), which backs off and
+retries on a transient HTTP status (429 rate-limit, 5xx gateway blip) from HL's edge
+(CloudFront/nginx). A one-off 429 self-heals in-tick instead of aborting the whole bar.
 """
+import time
 from typing import Optional
 
 from .config import LiveConfig
+
+
+# Transient HTTP statuses from Hyperliquid's edge (CloudFront/nginx), surfaced by the
+# SDK's ClientError. A 429/5xx is rejected BEFORE the matching engine, so retrying a
+# READ is always safe. For WRITES we retry only on 429 (unambiguously "rate-limited,
+# never processed") — a 5xx could in theory hide a lost success response, so an order
+# is not blindly resent on 5xx (avoids any chance of a double fill).
+_TRANSIENT_READ = frozenset({429, 500, 502, 503, 504})
+_TRANSIENT_WRITE = frozenset({429})
+
+
+def _http_status(exc) -> Optional[int]:
+    """Best-effort HTTP status from a hyperliquid ClientError or a requests error."""
+    for attr in ("status_code", "code"):
+        v = getattr(exc, attr, None)
+        if isinstance(v, int):
+            return v
+    resp = getattr(exc, "response", None)
+    if resp is not None and isinstance(getattr(resp, "status_code", None), int):
+        return resp.status_code
+    return None
+
+
+def _retry(fn, statuses, tries: int = 4, base_delay: float = 0.5):
+    """
+    Call fn(); on a transient HTTP status (in `statuses`) retry with exponential
+    backoff (0.5s, 1s, 2s). Any non-transient error — or the final attempt — raises,
+    so a genuine outage still surfaces to the tick handler (which retries next bar).
+    Turns a one-off 429/gateway blip into a silent self-heal instead of a skipped bar.
+    """
+    delay = base_delay
+    for attempt in range(1, tries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == tries or _http_status(e) not in statuses:
+                raise
+            time.sleep(delay)
+            delay *= 2
 
 
 class LiveBroker:
@@ -26,7 +70,7 @@ class LiveBroker:
         self._info = Info(cfg.hl_api_url, skip_ws=True)
 
         # asset metadata for rounding + leverage/margin limits
-        meta = self._info.meta()
+        meta = _retry(lambda: self._info.meta(), _TRANSIENT_READ)
         self._asset = next(a for a in meta["universe"] if a["name"] == cfg.coin)
         self._sz_decimals = int(self._asset["szDecimals"])
         self._px_decimals = max(0, 6 - self._sz_decimals)   # perps: MAX_DECIMALS=6
@@ -89,11 +133,12 @@ class LiveBroker:
             raise RuntimeError("secret_key required for order actions")
 
     # ----------------------------------------------------------------- #
-    #  READ-ONLY                                                          #
+    #  READ-ONLY  (retry on 429 + 5xx — idempotent)                       #
     # ----------------------------------------------------------------- #
 
     def mid_price(self) -> float:
-        return float(self._info.all_mids()[self.cfg.coin])
+        mids = _retry(lambda: self._info.all_mids(), _TRANSIENT_READ)
+        return float(mids[self.cfg.coin])
 
     STABLES = ("USDC", "USDT", "USDT0", "USDE", "USDH", "USD")
 
@@ -106,14 +151,14 @@ class LiveBroker:
         """
         if not self.address:
             raise ValueError("address required")
-        st = self._info.user_state(self.address)
+        st = _retry(lambda: self._info.user_state(self.address), _TRANSIENT_READ)
         try:
             perp = float(st["marginSummary"]["accountValue"])
         except (KeyError, TypeError, ValueError):
             perp = float(st.get("withdrawable", 0) or 0)
         spot = 0.0
         try:
-            sp = self._info.spot_user_state(self.address)
+            sp = _retry(lambda: self._info.spot_user_state(self.address), _TRANSIENT_READ)
             for b in sp.get("balances", []):
                 if b.get("coin") in self.STABLES:
                     spot += float(b.get("total", 0) or 0)
@@ -124,7 +169,7 @@ class LiveBroker:
     def open_position(self) -> Optional[dict]:
         if not self.address:
             raise ValueError("address required")
-        state = self._info.user_state(self.address)
+        state = _retry(lambda: self._info.user_state(self.address), _TRANSIENT_READ)
         for ap in state.get("assetPositions", []):
             pos = ap.get("position", {})
             if pos.get("coin") == self.cfg.coin and float(pos.get("szi", 0)) != 0:
@@ -138,7 +183,7 @@ class LiveBroker:
     def open_orders(self) -> list:
         if not self.address:
             raise ValueError("address required")
-        return self._info.open_orders(self.address)
+        return _retry(lambda: self._info.open_orders(self.address), _TRANSIENT_READ)
 
     # ----------------------------------------------------------------- #
     #  SETUP                                                              #
@@ -153,10 +198,11 @@ class LiveBroker:
         self._require_exchange()
         lev = max(1, min(int(leverage), self._max_leverage))
         is_cross = not self.cfg.isolated_margin
-        return self._exchange.update_leverage(lev, self.cfg.coin, is_cross)
+        return _retry(lambda: self._exchange.update_leverage(lev, self.cfg.coin, is_cross),
+                      _TRANSIENT_WRITE)
 
     # ----------------------------------------------------------------- #
-    #  ORDERS (long-only)                                                 #
+    #  ORDERS (long-only) — retry on 429 only (never risk a double fill)  #
     # ----------------------------------------------------------------- #
 
     def market_entry(self, size: float) -> dict:
@@ -169,7 +215,9 @@ class LiveBroker:
         size = self.round_size(size)
         if size <= 0:
             raise RuntimeError("market_entry: size rounds to 0")
-        res = self._exchange.market_open(self.cfg.coin, True, size, None, self.cfg.slippage)
+        res = _retry(
+            lambda: self._exchange.market_open(self.cfg.coin, True, size, None, self.cfg.slippage),
+            _TRANSIENT_WRITE)
         if res.get("status") != "ok":
             raise RuntimeError(f"market_entry failed: {res}")
         statuses = res["response"]["data"]["statuses"]
@@ -189,9 +237,10 @@ class LiveBroker:
         size = self.round_size(size)
         trig = self.round_stop_px(trigger_price)
         order_type = {"trigger": {"triggerPx": trig, "isMarket": True, "tpsl": "sl"}}
-        res = self._exchange.order(
-            self.cfg.coin, False, size, trig, order_type, reduce_only=True
-        )
+        res = _retry(
+            lambda: self._exchange.order(
+                self.cfg.coin, False, size, trig, order_type, reduce_only=True),
+            _TRANSIENT_WRITE)
         if res.get("status") != "ok":
             raise RuntimeError(f"place_stop failed: {res}")
         statuses = res["response"]["data"]["statuses"]
@@ -204,9 +253,9 @@ class LiveBroker:
 
     def cancel_order(self, oid: int) -> dict:
         self._require_exchange()
-        return self._exchange.cancel(self.cfg.coin, oid)
+        return _retry(lambda: self._exchange.cancel(self.cfg.coin, oid), _TRANSIENT_WRITE)
 
     def market_close(self) -> dict:
         """Market-close the whole position for the coin."""
         self._require_exchange()
-        return self._exchange.market_close(self.cfg.coin)
+        return _retry(lambda: self._exchange.market_close(self.cfg.coin), _TRANSIENT_WRITE)
