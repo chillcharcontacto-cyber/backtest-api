@@ -1,6 +1,60 @@
 # Handoff
 
-## Last Session Summary — risk raised $3 → $6/trade; account funded to ~$1,279; open trade verified
+## Last Session Summary — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
+
+**Big build session. Live bot untouched operationally; all new work is partner-facing +
+one resilience fix. Everything shipped to `main` + two sibling deliverable folders.**
+
+**429 retry/backoff fix (`f39a432`, deployed).** A live tick threw a TICK ERROR from a
+one-off HTTP 429 (Hyperliquid's CloudFront edge rate-limiting a poll). Position was never
+at risk (resting stop on the exchange). Wrapped every HL SDK call in `_retry()` with
+exponential backoff — reads retry on 429+5xx (idempotent), writes on **429 only** (rejected
+before matching → no double-fill risk). A transient blip now self-heals in-tick instead of
+skipping a bar. `ems_live/broker.py`; unit-tested; 87→ still green.
+
+**Partner replication — the goal: give trading partners the same autonomous EMS bot.**
+Worked through it end to end:
+- **Correct topology = each partner runs their OWN Render + OWN Hyperliquid.** Hosting for
+  them scales cost per partner AND makes you hold their keys — rejected. Self-serve = $0 to
+  the user, full isolation, no custody.
+- **Built the Tier-1 kit** `ems-live-bot/` (sibling folder): the monolith bot trimmed to a
+  clean, publishable template (no strategy files removed — it HAS the strategy) + Deploy-to-
+  Render + SETUP.md for non-coders. Verified zero personal data. **Superseded by Tier-4
+  below** for redistribution control; keep only as the simple unprotected option.
+- **User wanted redistribution control** ("they can't hand files to anyone without my
+  approval"). Analyzed 5 tiers (source check → obfuscate → encrypted-with-remote-key →
+  **server-side brain**). Honest limit: you can't make working code un-copyable, but you CAN
+  gate USE. Chose **Tier-4: keep the strategy server-side; ship only the hands.**
+
+**Tier-4 BUILT (3 stages, all tested):**
+- **Stage 1 — brain (`e78d547`, on `main`):** `POST /ems/decision` added to the existing
+  `api.py` web service (so hosting is ~$0 — it rides the already-deployed `backtest-api`
+  service). Given a partner's license key + state, it runs EMS V3 on fresh candles (reuses
+  the real `decider` → no drift) and returns a **signed, account-bound, 120s-expiring**
+  instruction. License = approved key BOUND to one HL address (env `EMS_LICENSE_KEYS`);
+  signing via `eth_account` (no new dep, env `EMS_BRAIN_SIGNING_KEY`). `ems_brain.py` +
+  `scripts/gen_brain_keys.py`. **8 tests.** DORMANT until both env vars are set → safe live.
+- **Stage 2 — thin client (`ems-thin-client/` sibling folder):** a full partner bot with
+  **ZERO strategy** — calls the brain, verifies 4 ways (signature=operator, account=mine,
+  nonce, not-expired), executes on the partner's HL account. Keeps all safety (save-before-
+  stop, guarded flatten, kill switch, equity-abort, the 429-retry broker). **No pandas/numpy,
+  no strategy names** (exit labels genericized to STOP/TREND_EXIT). **15 integration tests.**
+  Not committed to backtest-api (it's a separate PUBLIC repo the user publishes).
+- **Stage 3 — operator playbook (`6cacb76`, on `main`):** `docs/BRAIN_OPERATIONS.md` —
+  issue/revoke keys, activate, smoke-test. Private (not in the public thin-client repo).
+
+**110 tests total** (95 backtest-api + 15 thin client). **Activation deferred to next
+kickoff** (see Next Steps — only the user can do it: generate keys, set env vars, publish).
+
+⚠️ **Git hazard this session:** the `backtest-api` main clone dir is checked out on the
+**`multitimeframe`** branch (a side-chat's Pine work) and had that session's **uncommitted
+doc WIP**. All EMS/brain work was done on `main` via **throwaway `git worktree`s** to avoid
+touching it. Next session: do EMS work from a main worktree (or `git switch main` only if the
+dir is clean), never commit EMS changes onto `multitimeframe`.
+
+---
+
+## Previous Session Summary — risk raised $3 → $6/trade; account funded to ~$1,279; open trade verified
 
 **No code changes — a live config change + verification (~2026-08-20, a month after the
 ops_kit session below).**
@@ -34,7 +88,7 @@ you ever re-sync the blueprint, re-apply the mainnet dashboard overrides afterwa
 
 ---
 
-## Previous Session Summary — mainnet reconciled + H1-intrabar variation REJECTED + ops_kit shipped for the swing-bot
+## Session — mainnet reconciled + H1-intrabar variation REJECTED + ops_kit shipped for the swing-bot
 
 **Live account reconciled (read-only). Bot is FLAT; 2 mainnet trades done, net −$3.10.**
 
@@ -363,6 +417,17 @@ entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer 
 
 Deploy/arm/mainnet steps are all DONE. Nothing is blocking; the bot runs unattended.
 
+⭐⭐ **ACTIVATE TIER-4 (user deferred to this kickoff).** The brain + thin client are built
++ tested; only operator actions remain. Full guide: **`docs/BRAIN_OPERATIONS.md`**. Short:
+1) `py scripts/gen_brain_keys.py` → signing key + address. 2) Set `EMS_BRAIN_SIGNING_KEY` on
+the backtest-api **web service**; confirm `/health`; note the API URL. 3) Fill `EMS_BRAIN_URL`
++ `EMS_BRAIN_SIGNER` in `ems-thin-client/render.yaml` + README, publish `ems-thin-client` as a
+**public** repo. 4) Smoke-test with the user's own HL address in dry-run. 5) Per partner: mint
+a key, add `{key: their_HL_address}` to `EMS_LICENSE_KEYS` on the web service, send the key.
+Deliverables: brain on `main` (`ems_brain.py`, `/ems/decision`); thin client in the sibling
+folder `…/TradingEdgeLabs/ems-thin-client` (ready to `git init` + publish); the Tier-1 kit
+`…/ems-live-bot` is the superseded unprotected option.
+
 ⭐ **USER REMINDER (outstanding 2 sessions now):** start tracking the EMS indicator on
 **GU (GBP/USD) from Jan 5th** onward, and keep tracking it. (User's words: "get it from
 jan 5th on GU and keep tracking the indicator".) **Ask what they mean before building**:
@@ -386,6 +451,6 @@ so this needs a new data path in the EMS stack.
    switch + a persistent disk. If `ops_kit/` itself needs a fix, patch it here (canonical)
    and the user re-copies. Don't do swing-bot's integration from this session.
 
-Verify after any redeploy: 🚀 card reads `testnet=False dry_run=False risk $3.0` and
+Verify after any redeploy: 🚀 card reads `testnet=False dry_run=False risk $6.0` and
 `kill 10 losses/day`; step/heartbeat cards have real data (no TICK ERROR).
 Re-authorize the mainnet agent before its ~180-day expiry (authorized 2026-07-13).

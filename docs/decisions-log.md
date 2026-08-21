@@ -4,6 +4,49 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-08-21
+
+**Retry Hyperliquid calls on transient 429/5xx — reads freely, writes on 429 only**
+A live 429 (HL's CloudFront edge rate-limiting a poll) aborted a whole tick. Decision: wrap
+every HL SDK call in a backoff-retry, but split the policy by idempotency — READS retry on
+429+5xx (safe to repeat), WRITES (orders) retry on **429 only** because a 429 is rejected
+before the matching engine (cannot double-execute), whereas a 5xx could mask a lost success
+response and resending could double-fill. A genuine outage still surfaces (final attempt
+raises → the tick handler retries next bar). Rationale: turn a transient blip into a silent
+in-tick self-heal without ever risking a duplicate order.
+
+**Partners get the bot self-serve (own Render + own Hyperliquid), never operator-hosted**
+For giving trading partners the same EMS bot: each partner runs their OWN Render worker on
+their OWN HL account. Rejected operator-hosting because cost scales per partner AND the
+operator would hold everyone's agent keys (de-facto fund operator = custody + liability).
+Self-serve = $0 to the operator, full isolation, operator never touches partner funds/keys.
+The operator's job is only to make setup easy (a template repo + a non-coder SETUP).
+
+**Protecting the strategy: gate USE, not copying — chose a server-side brain (Tier-4)**
+The user wanted partners unable to redistribute a working bot without approval. Established
+the hard truth: code that runs on someone's machine can't be made un-copyable (all DRM is
+just cost-raising). The only robust lever is to NOT ship the secret — run the strategy on a
+server the operator controls. Decision: build Tier-4 — a **brain** (holds the strategy, signs
+decisions) + a **thin client** (holds no strategy, only executes signed, account-bound
+decisions). A stripped or forwarded client is inert without an approved license key the
+operator issues and binds to one HL account; revocation is instant. Accepted residual leak:
+partners can observe the signals they receive and infer the *idea* over time (unavoidable —
+the trades are visible on their own account), but they cannot run an autonomous bot for
+anyone without the operator's live server saying yes.
+
+**Brain colocates in the existing web service (~$0); thin client carries zero strategy**
+Implementation choices for Tier-4: (1) the brain is one new endpoint (`/ems/decision`) on the
+already-deployed `backtest-api` web service — no new host, ~$0 (free tier's ~30-60s cold start
+is negligible at 30-min bars). (2) Signing uses `eth_account` (already a dependency via the HL
+SDK — no new library); the client verifies signature + account-binding + nonce + expiry and
+fails safe (does nothing) on any mismatch or if the brain is unreachable. (3) The license map
+`{key: bound_HL_address}` lives in a web-service env var — add a line to approve, remove to
+revoke. (4) The brain reuses the existing `decider` predicates, so brain decisions are
+identical to the monolith bot (no strategy drift), and the thin client needs no pandas/numpy
+and no strategy names (exit labels genericized). The strategy edge never leaves the operator.
+
+---
+
 ## 2026-08-20
 
 **Raised live risk per trade $3 → $6 after funding the account to ~$1,279**
