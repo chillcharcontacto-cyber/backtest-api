@@ -2,6 +2,17 @@
 
 ## Last Session Summary — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
 
+**Update (2026-08-23) — no code changes.** A 2nd 429 TICK ERROR arrived (Sun 08-23 07:30).
+Full on-chain health check: bot fine — BTC long still open **+$248** (0.02151 @ 64,477, mark
+~76k), the ONE reduce-only stop resting @ 64,337, no dupes/orphans, **the 429 caused zero
+trades**, liq 52,360 (far). Confirmed the **429 retry fix IS deployed** (user got the 🚀 card
+on 08-21) — so this was just a rate-limit burst that outlasted the ~3.5s retry window (rare).
+**Decision: leave 429 alerting AS-IS** — the TICK ERROR card is a catch-all that also catches
+real errors, so it's not silenced. A single 429 is noise; a *pattern* (many/day) is signal;
+the user watches for the pattern manually and pings if it recurs. (A "smart" alerting change —
+silence single 429s, alert on a daily threshold, keep non-429 errors loud — was designed and
+**deferred**; see Parked.)
+
 **Big build session. Live bot untouched operationally; all new work is partner-facing +
 one resilience fix. Everything shipped to `main` + two sibling deliverable folders.**
 
@@ -332,13 +343,14 @@ healthcheck `https://hc-ping.com/27d79596-d668-44e4-b8c8-991f6912ee9c`.
 `ems-live-bot`: `HL_TESTNET=false`, `EMS_DRY_RUN=false`, **risk $6/trade** (raised from $3
 this session), kill 10 losses/day (= −$60/day max), `EMS_STATE_PATH=/data/ems_mainnet_state.json`.
 Verify the 🚀 card reads `risk $6.0` after the redeploy.
-- Master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$1,279 equity** (perp $455 + spot
-  $824). Funded up from ~$325 via Phantom→KuCoin→Arbitrum→HL. Unified Account backs perp off spot.
+- Master `0x18ce2b5c85827c343c35de25fc477a62c5bd6964`; **~$1,414 equity** (as of 08-23, grown
+  with the open winner). Funded up from ~$325 via Phantom→KuCoin→Arbitrum→HL. Unified Account.
 - Mainnet agent **`ems-bot-main`** `0xc07aA2354249ba34D7a4436fEDEC6864Dd07b8Fd` authorized
   (~180 days from 2026-07-13; re-authorize before it lapses). Key in Render env only, trade-only.
-- **OPEN trade (as of ~08-20 wrap-up):** BTC long 0.02151 @ 64,477, resting Stop Market 64,337
-  (= the old $3 risk), +~$179 unrealized at BTC ~72.8k — a deep runner riding to the H1<EMA100
-  exit. Sized at $3 (opened before the change); the next entry sizes at $6.
+- **OPEN trade (as of 08-23):** BTC long 0.02151 @ 64,477, resting Stop Market 64,337 (= the
+  old $3 risk), **+~$248 unrealized** at BTC ~76k — a deep runner still riding to the H1<EMA100
+  exit (stop sits ~15% below price). Sized at $3 (opened 08-19, before the change); next entry
+  sizes at $6. Health-checked clean 08-23 (see Last Session Update).
 - Auto-leverage: at $6 risk on ~$1.3k, a ~1% stop → ~1×, tight stops → higher lev, all liq-safe.
 - Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker points at mainnet.
 
@@ -367,6 +379,11 @@ tracked in swing-bot's own handoff, not here. This repo just hosts the kit.
 ## Parked / Unfinished
 
 **EMS live bot — LIVE ON MAINNET; open refinements (none blocking):**
+- **Smart 429 alerting (designed, deferred 08-23).** Today's fix: in `run_forever`'s tick
+  handler, detect a transient-429 exhaustion and (a) log it quietly instead of a Telegram
+  TICK ERROR, (b) count them and alert once if >~5/day (pattern = signal), (c) keep every
+  NON-429 error loud. User chose to leave alerting as-is for now and watch the pattern
+  manually — build only if the blip cards become annoying or a pattern shows.
 - **Fee-drag study → possibly raise `min_risk_pct`.** Live trade #2 paid 0.30R in fees on a
   0.29% stop. `fee_R = 0.09/stop%`, so sub-0.5% stops cost >0.18R each. Open question: does
   filtering out the tightest stops raise *net* EV, or are those trades net-positive anyway?

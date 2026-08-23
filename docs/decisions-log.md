@@ -4,6 +4,20 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-08-23
+
+**Keep the 429 TICK-ERROR alert as-is — do not blanket-silence it**
+After a second harmless 429 alert, decided NOT to silence 429 TICK-ERROR cards, because that
+card is a **catch-all** for any per-bar failure (feed/broker/logic errors too) — muting it
+would hide real problems. A *single* 429 is noise (HL edge rate-limiting; the bot polls only
+once per 30-min bar, so it isn't the cause and it self-corrects next bar with the position
+protected by the resting stop). A *pattern* of 429s would be signal (HL limit change / a
+loop). Resolution: leave alerting unchanged for now; the user watches for a daily pattern
+manually. A "smart" handler (quiet-log single 429s, alert on a daily threshold, keep non-429
+errors loud) is designed and parked — build only if the noise or a pattern warrants it.
+
+---
+
 ## 2026-08-21
 
 **Retry Hyperliquid calls on transient 429/5xx — reads freely, writes on 429 only**
