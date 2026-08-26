@@ -2,6 +2,21 @@
 
 ## Last Session Summary — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
 
+**Update (2026-08-26) — TIER-4 ACTIVATED: brain deployed + verified live.** Created the brain's
+web service on Render — it never existed (only the worker did), and the blueprint had reserved
+the name `backtest-api`, so it's a **standalone Free web service named `ems-brain`** →
+**`https://ems-brain.onrender.com`** (from `main`, `uvicorn api:app`, Oregon, health `/health`,
+auto-deploy on commit). Set env `EMS_BRAIN_SIGNING_KEY` + `EMS_LICENSE_KEYS =
+{"EMS-test-01":"0x18ce…964"}` (a TEST key bound to the master, for verification only). **Verified
+end-to-end:** `POST /ems/decision` → HTTP 200 → strategy ran on live candles (returned `none` =
+no signal this bar), and the signature recovers to operator signer
+**`0x35657b4d9790ff143c050556B2b89aC38eDfe3fb`**, account-bound + nonce'd + unexpired. Whole chain
+works (license → candles → strategy → signed decision → verifiable). ⚠️ **The private signing key
+was shown in a Render screenshot → it is in this chat → ROTATE it (new keypair → update
+`EMS_BRAIN_SIGNING_KEY` → send the new signer address) BEFORE issuing any real partner key.**
+Remaining (see Next Steps): rotate key → prep+publish the thin-client repo → smoke-test a thin
+client dry-run → issue real partner keys (replacing EMS-test-01).
+
 **Update (2026-08-23) — no code changes.** A 2nd 429 TICK ERROR arrived (Sun 08-23 07:30).
 Full on-chain health check: bot fine — BTC long still open **+$248** (0.02151 @ 64,477, mark
 ~76k), the ONE reduce-only stop resting @ 64,337, no dupes/orphans, **the 429 caused zero
@@ -434,16 +449,25 @@ entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer 
 
 Deploy/arm/mainnet steps are all DONE. Nothing is blocking; the bot runs unattended.
 
-⭐⭐ **ACTIVATE TIER-4 (user deferred to this kickoff).** The brain + thin client are built
-+ tested; only operator actions remain. Full guide: **`docs/BRAIN_OPERATIONS.md`**. Short:
-1) `py scripts/gen_brain_keys.py` → signing key + address. 2) Set `EMS_BRAIN_SIGNING_KEY` on
-the backtest-api **web service**; confirm `/health`; note the API URL. 3) Fill `EMS_BRAIN_URL`
-+ `EMS_BRAIN_SIGNER` in `ems-thin-client/render.yaml` + README, publish `ems-thin-client` as a
-**public** repo. 4) Smoke-test with the user's own HL address in dry-run. 5) Per partner: mint
-a key, add `{key: their_HL_address}` to `EMS_LICENSE_KEYS` on the web service, send the key.
-Deliverables: brain on `main` (`ems_brain.py`, `/ems/decision`); thin client in the sibling
-folder `…/TradingEdgeLabs/ems-thin-client` (ready to `git init` + publish); the Tier-1 kit
-`…/ems-live-bot` is the superseded unprotected option.
+⭐⭐ **TIER-4 — brain is LIVE + verified (08-26). Finish activation, in order:**
+DONE: brain web service `ems-brain` deployed (`https://ems-brain.onrender.com`), signing +
+license gating verified end-to-end with test key `EMS-test-01` (bound to the master).
+REMAINING:
+1) **ROTATE the signing key FIRST** — the private key leaked in a screenshot (in this chat).
+   Generate a fresh keypair (`py -c "from eth_account import Account; a=Account.create();
+   print(a.key.hex(), a.address)"`), replace `EMS_BRAIN_SIGNING_KEY` on the `ems-brain` service
+   (Save and deploy), and give Claude the NEW signer address. Do this before any real partner.
+2) **Prep + publish the thin-client repo.** Claude fills `EMS_BRAIN_URL=https://ems-brain.onrender.com`
+   + `EMS_BRAIN_SIGNER=<new signer>` into `…/TradingEdgeLabs/ems-thin-client/render.yaml` + README,
+   then the user `git init`s it and publishes it as a **public** GitHub repo.
+3) **Smoke-test** a thin client in dry-run (own HL address + a license key) against the live brain.
+4) **Issue real partner keys** — per partner add `{key: their_HL_address}` to `EMS_LICENSE_KEYS`
+   on `ems-brain` (Save and deploy) and send them the key; replace/remove `EMS-test-01`.
+Full operator guide: **`docs/BRAIN_OPERATIONS.md`**. Deliverables: brain on `main`
+(`ems_brain.py`, `/ems/decision`); thin client sibling folder `…/TradingEdgeLabs/ems-thin-client`;
+Tier-1 kit `…/ems-live-bot` = superseded unprotected option.
+NOTE: the `backtest-api` web service in render.yaml is NOT what's deployed — the live brain is the
+standalone `ems-brain` service (created manually to avoid a blueprint re-sync resetting the worker).
 
 ⭐ **USER REMINDER (outstanding 2 sessions now):** start tracking the EMS indicator on
 **GU (GBP/USD) from Jan 5th** onward, and keep tracking it. (User's words: "get it from

@@ -4,6 +4,30 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-08-26
+
+**Brain runs as a standalone `ems-brain` web service, NOT the blueprint's `backtest-api` one**
+Activating Tier-4 revealed the `backtest-api` web service defined in render.yaml was never
+actually deployed (only the `ems-live-bot` worker existed). Rather than re-sync the blueprint to
+create it — which would reset the live worker's dashboard overrides back to render.yaml's SAFE
+DEFAULTS (testnet/dry-run/$20) and flip the real bot off — created the brain as a **separate,
+manually-configured Free web service** named `ems-brain` (`https://ems-brain.onrender.com`, from
+`main`, `uvicorn api:app`). Decision: the live brain is `ems-brain`, independent of the blueprint;
+the render.yaml `backtest-api` web block stays unused. Free tier is fine (cold-start ~30-60s is
+nothing at 30-min bars; the endpoint self-warms on the first thin-client call each cycle).
+
+**Verified the full Tier-4 chain before trusting it, and required a key rotation after exposure**
+Confirmed end-to-end on the live brain: `POST /ems/decision` with a bound license → HTTP 200 → the
+strategy ran on live candles → the returned decision's signature recovers to the operator's signer
+address, account-bound + nonce'd + unexpired. Only after that proof is the brain considered
+"working." Separately: the private `EMS_BRAIN_SIGNING_KEY` was captured in a Render screenshot
+(thus in the chat transcript), so decided it MUST be rotated before issuing any real partner key —
+a signing key that has touched any log/screenshot is treated as compromised, even if the practical
+attack (MITM + resign) is hard. Rotation = new keypair, update the env var, ship the new signer
+address in the thin client.
+
+---
+
 ## 2026-08-23
 
 **Keep the 429 TICK-ERROR alert as-is — do not blanket-silence it**
