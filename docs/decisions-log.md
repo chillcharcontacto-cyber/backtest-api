@@ -4,6 +4,43 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-08-27
+
+**429 spam diagnosed as Render shared-IP rate-limiting — mitigate, don't chase a "true zero"**
+Frequent 429 TICK ERRORs (8/day) were diagnosed as HL rate-limiting Render's shared outbound IP
+(HL is fine from other IPs; the worker makes ~1 HL call/tick, so it isn't over-calling). It's
+outside the bot's control and harmless to an OPEN position (the stop rests on the exchange). The
+only real exposure was a 429 landing on an ENTRY bar → a missed trade. Decision: mitigate at the
+client (hardened retry + catch-up + throttle) rather than pay for a Render dedicated IP — and be
+honest that a client cannot guarantee ZERO missed entries (if the exchange refuses your IP for
+the whole window, any bot misses).
+
+**Retry lives in one shared module; reads vs writes differ; entries defer only on 429**
+Extracted the HTTP retry into `ems_live/nethttp.py` (used by broker.py AND feed.py) so a
+rate-limit is ridden out at EVERY exchange touchpoint (candles, SL adaptation, orders), not just
+the SDK calls. Hardened to 6 tries with backoff + jitter (~45s, well inside a 30-min bar; jitter
+de-syncs from a shared-IP limit). READS retry on 429+5xx; WRITES (orders) retry on **429 only** —
+a 429 is rejected before matching (safe to resend) whereas a 5xx could hide a lost success.
+Consistent rule reused by the missed-entry catch-up: an entry is DEFERRED-and-retried only on a
+429 (definitely not executed); an ambiguous non-429 order error ABORTS with no pending, so a
+trade is never double-entered.
+
+**Missed-entry catch-up via a bounded pending-entry, not a decider look-back**
+Chose to persist a `<state>.pending` sidecar when an entry defers, and retry it on subsequent
+flat ticks while the crossover is ≤ CATCHUP_MAX_BARS (3) old and still valid (guard_order
+re-checks price vs stop), rather than widening the decider's look-back (which would touch the
+backtest-shared predicates and risk parity drift). The entry path was extracted verbatim into
+`runner._attempt_entry()` so the normal path is unchanged (parity + 103 tests confirm) and the
+catch-up is a thin additive layer.
+
+**429 tick alerts are throttled to one/day, but never blanket-silenced**
+A 429/5xx tick error now sends ONE Telegram card per UTC day plus a running count sidecar; any
+NON-429 error stays loud immediately. This kills the per-blip spam while preserving the signal
+if the rate-limit pattern worsens — consistent with the 2026-08-23 decision not to blanket-mute
+the catch-all TICK ERROR card.
+
+---
+
 ## 2026-08-26
 
 **Brain runs as a standalone `ems-brain` web service, NOT the blueprint's `backtest-api` one**

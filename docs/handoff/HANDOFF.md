@@ -1,6 +1,37 @@
 # Handoff
 
-## Last Session Summary — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
+## Last Session Summary — 429 rate-limit fix: hardened retry + missed-entry catch-up + throttled alerts
+
+**Shipped (`45e4a1e`, deployed to the worker). The live bot's OPEN trade is untouched — the
+in-position management code didn't change; still riding (+$310 as of 08-27).**
+
+**Diagnosed the 429 TICK-ERROR pattern** (user reported 8 in a day): it is NOT the bot and NOT
+HL being down. HL is fine from other IPs (12/12 OK from a home IP), and the worker makes only
+~1 HL call per 30-min tick — so it isn't over-calling. It's **Render's shared outbound IP
+being rate-limited by Hyperliquid** — outside the bot's control, and harmless to an open
+position (the stop rests on the exchange). The one real risk was a 429 landing on an ENTRY bar
+→ a missed trade.
+
+**Fix — 3 parts, 103 tests green (`tests/test_live_catchup.py` new):**
+1. **Shared hardened retry** — new `ems_live/nethttp.py` used by BOTH `broker.py` and `feed.py`:
+   6 tries, exp backoff + jitter (~45s), so a rate-limit is ridden out at EVERY HL touchpoint
+   (candles, SL adapt, orders). Reads retry 429+5xx; orders retry **429 only** (rejected
+   pre-matching → no double-fill; an ambiguous 5xx is never resent).
+2. **Missed-entry catch-up** — the entry path is extracted to `runner._attempt_entry()`; a 429
+   during entry now **DEFERS** (saves a `<state>.pending` sidecar) and the next bar retries while
+   the signal is still fresh (≤ `CATCHUP_MAX_BARS`=3 bars) and valid (guard re-checks price vs
+   stop). An ambiguous NON-429 order error aborts with NO pending → a trade is never double-
+   entered. Near-zero missed entries from a rate-limit (not literally zero — a block spanning the
+   entry bar AND the catch-up window would still miss; unavoidable for any bot).
+3. **Throttled alerts** — a 429/5xx tick error sends **ONE Telegram card per day** + a running
+   count (`<state>.429`); any NON-429 error stays loud. Kills the spam, keeps the signal.
+
+Rule of thumb kept: a one-off 429 = noise (harmless, self-heals); a NON-429 TICK ERROR = real,
+flag it. `is_rate_limit()` in `nethttp.py` is what routes them.
+
+---
+
+## Previous Session Summary — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
 
 **Update (2026-08-26) — TIER-4 ACTIVATED: brain deployed + verified live.** Created the brain's
 web service on Render — it never existed (only the worker did), and the blueprint had reserved
@@ -80,7 +111,7 @@ dir is clean), never commit EMS changes onto `multitimeframe`.
 
 ---
 
-## Previous Session Summary — risk raised $3 → $6/trade; account funded to ~$1,279; open trade verified
+## Session — risk raised $3 → $6/trade; account funded to ~$1,279; open trade verified
 
 **No code changes — a live config change + verification (~2026-08-20, a month after the
 ops_kit session below).**
@@ -362,7 +393,7 @@ Verify the 🚀 card reads `risk $6.0` after the redeploy.
   with the open winner). Funded up from ~$325 via Phantom→KuCoin→Arbitrum→HL. Unified Account.
 - Mainnet agent **`ems-bot-main`** `0xc07aA2354249ba34D7a4436fEDEC6864Dd07b8Fd` authorized
   (~180 days from 2026-07-13; re-authorize before it lapses). Key in Render env only, trade-only.
-- **OPEN trade (as of 08-23):** BTC long 0.02151 @ 64,477, resting Stop Market 64,337 (= the
+- **OPEN trade (as of 08-27):** BTC long 0.02151 @ 64,477, resting Stop Market 64,337 (= the
   old $3 risk), **+~$248 unrealized** at BTC ~76k — a deep runner still riding to the H1<EMA100
   exit (stop sits ~15% below price). Sized at $3 (opened 08-19, before the change); next entry
   sizes at $6. Health-checked clean 08-23 (see Last Session Update).
