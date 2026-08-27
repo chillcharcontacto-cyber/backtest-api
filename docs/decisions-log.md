@@ -6,6 +6,26 @@ A running list of architectural and product decisions, newest first.
 
 ## 2026-08-27
 
+**Tier-4 activated end-to-end — brain live, thin-client repo public, verified with the shipped code**
+Finished Tier-4: the brain runs on the standalone `ems-brain` Free web service
+(`https://ems-brain.onrender.com`), and the partner bot is a PUBLIC repo
+(`github.com/chillcharcontacto-cyber/ems-thin-client`) with the brain URL + operator signer baked
+into render.yaml + the Deploy-to-Render button. Verification standard adopted: don't consider a
+release done until the SHIPPED client code proves it — used `thin.brain_client.BrainClient`
+against the live brain and confirmed a real signed decision verifies against the operator signer
+(account + nonce + expiry) and that a wrong-signer client is rejected. Onboarding is now a
+per-partner operator recipe (license key bound to the partner's exact HL address), not a build.
+
+**A signing key that touches a screenshot/log is compromised — rotate, and never screenshot it**
+The signing key was rotated TWICE during activation because the first two private keys appeared in
+Render screenshots the user shared. Decision/lesson: treat any key that has been screenshotted,
+pasted into chat, or logged as compromised and rotate it before it guards anything real; generate
+the keypair and copy the private half **directly** into the host env, never screenshotting the
+terminal. The live signer `0xd0B67b43ce1459381871aF5b64FBB47CC4404513` was generated this way (its
+private half never left the user's machine). Also: public-repo pushes must use the GitHub
+**noreply** email (`{id}+{user}@users.noreply.github.com`) or GH007 blocks them under email
+privacy — standardize on noreply for any repo the user publishes.
+
 **429 spam diagnosed as Render shared-IP rate-limiting — mitigate, don't chase a "true zero"**
 Frequent 429 TICK ERRORs (8/day) were diagnosed as HL rate-limiting Render's shared outbound IP
 (HL is fine from other IPs; the worker makes ~1 HL call/tick, so it isn't over-calling). It's

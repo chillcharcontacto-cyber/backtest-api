@@ -1,6 +1,32 @@
 # Handoff
 
-## Last Session Summary — 429 rate-limit fix: hardened retry + missed-entry catch-up + throttled alerts
+## Last Session Summary — Tier-4 ACTIVATED: brain live + thin-client published + signing key rotated clean
+
+**Tier-4 is now fully live — no repo code changes; all activation (Render + GitHub + verification).**
+
+- **Brain deployed + serving:** `https://ems-brain.onrender.com` (the standalone `ems-brain` Free
+  web service). Signs license-gated EMS decisions; verified end-to-end.
+- **Signing key rotated to a CLEAN one.** The first TWO generated keys were exposed in Render
+  screenshots, so it was rotated twice; the LIVE signer is now
+  **`0xd0B67b43ce1459381871aF5b64FBB47CC4404513`** (that key's private half was never
+  screenshotted). `EMS_BRAIN_SIGNING_KEY` on the `ems-brain` service holds it. Lesson: after
+  generating a key, copy the private half straight into Render — never screenshot the terminal.
+- **Thin-client repo PUBLISHED public:** `github.com/chillcharcontacto-cyber/ems-thin-client`
+  (branch `main`), brain URL + clean signer baked into `render.yaml`/`.env.example`, Deploy-to-
+  Render button targeting the repo. Committed with the GitHub **noreply** email
+  (`273226247+chillcharcontacto-cyber@users.noreply.github.com`) to pass email-privacy (GH007
+  blocks a real email in a public push).
+- **Verified end-to-end with the SHIPPED client code:** `thin.brain_client.BrainClient` against
+  the live brain returns a signed decision that verifies against the clean signer (account +
+  nonce + expiry checked); a wrong-signer client is rejected. Test key `EMS-test-01` bound to the
+  master (`0x18ce…964`) for verification — harmless; remove/keep as desired.
+
+Tier-4 is ready for real partners; onboarding is now a per-partner operator recipe (Next Steps /
+`docs/BRAIN_OPERATIONS.md`). The "rotate before first partner" reminder is DONE (live key is clean).
+
+---
+
+## Previous Session Summary — 429 rate-limit fix: hardened retry + missed-entry catch-up + throttled alerts
 
 **Shipped (`45e4a1e`, deployed to the worker). The live bot's OPEN trade is untouched — the
 in-position management code didn't change; still riding (+$310 as of 08-27).**
@@ -31,7 +57,7 @@ flag it. `is_rate_limit()` in `nethttp.py` is what routes them.
 
 ---
 
-## Previous Session Summary — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
+## Session — partner distribution built: kit → Tier-4 protected bot (brain + thin client) + 429 fix
 
 **Update (2026-08-26) — TIER-4 ACTIVATED: brain deployed + verified live.** Created the brain's
 web service on Render — it never existed (only the worker did), and the blueprint had reserved
@@ -480,25 +506,22 @@ entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer 
 
 Deploy/arm/mainnet steps are all DONE. Nothing is blocking; the bot runs unattended.
 
-⭐⭐ **TIER-4 — brain is LIVE + verified (08-26). Finish activation, in order:**
-DONE: brain web service `ems-brain` deployed (`https://ems-brain.onrender.com`), signing +
-license gating verified end-to-end with test key `EMS-test-01` (bound to the master).
-REMAINING:
-1) **ROTATE the signing key FIRST** — the private key leaked in a screenshot (in this chat).
-   Generate a fresh keypair (`py -c "from eth_account import Account; a=Account.create();
-   print(a.key.hex(), a.address)"`), replace `EMS_BRAIN_SIGNING_KEY` on the `ems-brain` service
-   (Save and deploy), and give Claude the NEW signer address. Do this before any real partner.
-2) **Prep + publish the thin-client repo.** Claude fills `EMS_BRAIN_URL=https://ems-brain.onrender.com`
-   + `EMS_BRAIN_SIGNER=<new signer>` into `…/TradingEdgeLabs/ems-thin-client/render.yaml` + README,
-   then the user `git init`s it and publishes it as a **public** GitHub repo.
-3) **Smoke-test** a thin client in dry-run (own HL address + a license key) against the live brain.
-4) **Issue real partner keys** — per partner add `{key: their_HL_address}` to `EMS_LICENSE_KEYS`
-   on `ems-brain` (Save and deploy) and send them the key; replace/remove `EMS-test-01`.
-Full operator guide: **`docs/BRAIN_OPERATIONS.md`**. Deliverables: brain on `main`
-(`ems_brain.py`, `/ems/decision`); thin client sibling folder `…/TradingEdgeLabs/ems-thin-client`;
-Tier-1 kit `…/ems-live-bot` = superseded unprotected option.
-NOTE: the `backtest-api` web service in render.yaml is NOT what's deployed — the live brain is the
-standalone `ems-brain` service (created manually to avoid a blueprint re-sync resetting the worker).
+⭐ **TIER-4 IS LIVE (activation COMPLETE 08-27).** Brain `https://ems-brain.onrender.com` (clean
+signer `0xd0B67b43ce1459381871aF5b64FBB47CC4404513`); public thin-client repo
+`github.com/chillcharcontacto-cyber/ems-thin-client`. Only remaining action is **onboarding real
+partners, on demand** (per-partner operator recipe — full detail in `docs/BRAIN_OPERATIONS.md`):
+1) Send the partner the repo link + "start SETUP.md, do the Hyperliquid part first."
+2) They create + fund their HL account → send you their **main address** (the exact one they
+   deploy with as `HL_MASTER_ADDRESS`; the license binds to it, a mismatch is denied).
+3) Mint a key: `py -c "import secrets; print('EMS-'+secrets.token_hex(12))"`.
+4) Render → `ems-brain` → Environment → `EMS_LICENSE_KEYS` → add `,"THEIR-KEY":"0xTheirAddress"`
+   inside the `{}` → Save and deploy. (Claude can hand you the exact JSON value to avoid a fumble.)
+5) Send the partner their key + the repo link; they finish SETUP.md and arm.
+Revoke = remove their line → Save and deploy (their bot stops next tick).
+NOTE: the live brain is the standalone `ems-brain` service (NOT the render.yaml `backtest-api`
+web block — that was never deployed; created manually to avoid a blueprint re-sync resetting the
+worker). Deliverables: brain on `main` (`ems_brain.py`, `/ems/decision`); thin client
+`…/TradingEdgeLabs/ems-thin-client`; Tier-1 kit `…/ems-live-bot` = superseded unprotected option.
 
 ⭐ **USER REMINDER (outstanding 2 sessions now):** start tracking the EMS indicator on
 **GU (GBP/USD) from Jan 5th** onward, and keep tracking it. (User's words: "get it from
