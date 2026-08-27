@@ -29,6 +29,7 @@ from .sl_adapter import adapt_sl_to_hl
 from .position import (PositionState, PositionStore, reconcile,
                        FLAT, IN_POSITION)
 from .daylimit import DayLedgerStore, record as ledger_record, is_halted
+from .nethttp import is_rate_limit
 from . import notify
 
 
@@ -217,7 +218,13 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
                      ex.r_multiple, ex.exit_time, today, log)
         return store_flat(store)
 
-    # ---------------- FLAT: check entry ----------------
+    # ---------------- FLAT: catch up a deferred entry, else check for a new one ----
+    # First, if a prior bar's entry was DEFERRED by a rate-limit, retry it now (as long
+    # as it's still fresh + valid). This is the missed-entry catch-up.
+    caught = _try_pending_entry(cfg, store, broker, ctx, i, today, log)
+    if caught is not None:
+        return caught
+
     # LIVE timing: crossover on the JUST-CLOSED bar i -> enter at market NOW
     # (~ backtest open[i+1]), not one bar late.
     sig = check_entry_live(ctx, i, cfg, ctx.thirty_min)
@@ -226,32 +233,124 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         _notify_status(cfg, ctx, i, m30, t, log)   # market follow-up while flat
         return state
 
-    # kill switch — halt new entries once today's loss limit is hit
+    result = _attempt_entry(cfg, store, broker, t, sig.anchor_time, sig.crossover_time,
+                            sig.sl_price, sig.entry_price, today, log)
+    return result if result is not None else state
+
+
+def store_flat(store: PositionStore) -> PositionState:
+    s = PositionState()
+    store.save(s)
+    return s
+
+
+# --------------------------------------------------------------------------- #
+#  Entry execution + missed-entry catch-up                                     #
+# --------------------------------------------------------------------------- #
+
+CATCHUP_MAX_BARS = 3     # retry a deferred entry while its crossover is <= this many M30 bars old
+
+
+def _pending_path(cfg) -> str:
+    return cfg.state_path + ".pending"
+
+
+def _save_pending(cfg, anchor_time, crossover_time, sl_binance, bar_t):
+    data = {"anchor_time": str(anchor_time), "crossover_time": str(crossover_time),
+            "sl_binance": float(sl_binance), "bar_time": str(bar_t)}
+    try:
+        p = _pending_path(cfg)
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(p + ".tmp", p)
+    except Exception:
+        pass
+
+
+def _load_pending(cfg):
+    p = _pending_path(cfg)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _clear_pending(cfg):
+    try:
+        p = _pending_path(cfg)
+        if os.path.exists(p):
+            os.remove(p)
+    except Exception:
+        pass
+
+
+def _defer_or_abort(cfg, exc, stage, anchor_time, crossover_time, sl_binance, t, log):
+    """A transient rate-limit -> save a pending entry so the next bar retries it. Any
+    other (permanent) error -> clear pending and abort with a loud card."""
+    if is_rate_limit(exc):
+        _save_pending(cfg, anchor_time, crossover_time, sl_binance, t)
+        log(f"  ENTRY DEFERRED — {stage} rate-limited; will retry next bar")
+        return None
+    _clear_pending(cfg)
+    log(f"  ENTRY ABORTED — {stage}: {exc!r}")
+    notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"{stage}: {exc!r}"))
+    return None
+
+
+def _try_pending_entry(cfg, store, broker, ctx, i, today, log):
+    """If a previously-deferred entry is pending AND still fresh, retry it now. Validity
+    (price still above the stop) is enforced downstream by guard_order in _attempt_entry;
+    a broken setup clears the pending. Returns the new state on a fill, else None."""
+    pend = _load_pending(cfg)
+    if not pend:
+        return None
+    t = ctx.m30_times[i]
+    try:
+        age = int((t - pd.Timestamp(pend["crossover_time"])) / ctx.thirty_min)
+    except Exception:
+        age = 10**6
+    if age < 0 or age > CATCHUP_MAX_BARS:
+        log(f"  pending entry stale (age {age} bars) — dropping")
+        _clear_pending(cfg)
+        return None
+    log(f"  CATCH-UP: retrying deferred entry (crossover {pend['crossover_time']}, age {age} bars)")
+    return _attempt_entry(cfg, store, broker, t, pd.Timestamp(pend["anchor_time"]),
+                          pd.Timestamp(pend["crossover_time"]), pend["sl_binance"],
+                          ctx.m30_closes[i], today, log)
+
+
+def _attempt_entry(cfg, store, broker, t, anchor_time, crossover_time, sl_binance,
+                   entry_est, today, log):
+    """
+    Execute an entry for a detected signal, or DEFER it on a transient rate-limit so the
+    next bar retries (missed-entry catch-up). Returns the new IN_POSITION state on a live
+    fill, else None. Permanent rejections (kill switch / infeasible / guard / dry-run)
+    clear any pending; only rate-limited HL failures defer. A 429 on the ORDER is safe to
+    retry (rejected before matching); an ambiguous non-429 order error aborts (no double
+    fill). Faithful to the original inline entry path — plus the defer/catch-up.
+    """
     if _halted(cfg, today):
-        log(f"  KILL SWITCH active — daily loss limit reached, no entries today ({today})")
-        notify.send_telegram(notify.fmt_blocked(
-            "KILL SWITCH", f"daily loss limit hit, halted today ({today})"))
-        return state
+        _clear_pending(cfg)
+        log(f"  KILL SWITCH active — no entries today ({today})")
+        notify.send_telegram(notify.fmt_blocked("KILL SWITCH", f"daily loss limit hit, halted today ({today})"))
+        return None
 
     # adapt SL to Hyperliquid candles over the Binance anchor range
     try:
-        sl_hl = adapt_sl_to_hl(sig.anchor_time, sig.crossover_time,
-                               cfg.coin, cfg.hl_api_url)
-    except RuntimeError as e:
-        log(f"  ENTRY ABORTED — SL adaptation failed: {e}")
-        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"SL adaptation failed: {e}"))
-        return state
+        sl_hl = adapt_sl_to_hl(anchor_time, crossover_time, cfg.coin, cfg.hl_api_url)
+    except Exception as e:
+        return _defer_or_abort(cfg, e, "SL adaptation", anchor_time, crossover_time, sl_binance, t, log)
 
-    # entry price = live market at this instant (~ next-bar open = backtest entry).
-    # sig.entry_price is only a close[i] estimate; prefer the exchange mid.
-    entry = sig.entry_price
+    entry = entry_est
     if broker is not None:
         try:
             entry = broker.mid_price()
         except Exception:
-            pass   # fall back to the close[i] estimate
+            pass   # fall back to the estimate
 
-    # equity-relative plan (auto-leverage). Read-only broker works in dry_run too.
     equity = None
     coin_max = cfg.max_leverage or 40
     maint = 0.0125
@@ -261,37 +360,39 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         try:
             equity = broker.account_value()
         except Exception as e:
-            log(f"  equity read failed ({e!r}) — falling back to fixed leverage {cfg.leverage}x")
+            log(f"  equity read failed ({e!r})")
+            if not cfg.dry_run:
+                return _defer_or_abort(cfg, e, "equity read", anchor_time, crossover_time, sl_binance, t, log)
 
     if equity is not None and equity > 0:
         plan = plan_trade(entry, sl_hl, cfg.risk_usd, equity, cfg, coin_max, maint)
     elif not cfg.dry_run:
-        # LIVE with no equity read -> we cannot size liquidation-safely. Never enter
-        # blind on the money path; skip and retry on the next signal.
+        _clear_pending(cfg)
         log("  ENTRY ABORTED — equity unavailable, cannot size safely")
-        notify.send_telegram(notify.fmt_blocked(
-            "ENTRY ABORTED", "equity read unavailable — skipping to avoid unsafe leverage"))
-        return state
+        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", "equity read unavailable — skipping to avoid unsafe leverage"))
+        return None
     else:
-        # dry_run only: fixed fallback purely to log the intended trade
         try:
             sz = compute_size(entry, sl_hl, cfg.risk_usd)
         except ValueError as e:
+            _clear_pending(cfg)
             log(f"  ENTRY ABORTED — sizing error: {e}")
             notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"sizing error: {e}"))
-            return state
+            return None
         plan = TradePlan(sz, cfg.leverage, sz * entry, True, False, "dry-run no-equity fallback")
 
     if not plan.feasible:
+        _clear_pending(cfg)
         log(f"  ENTRY ABORTED — {plan.reason}")
         notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", plan.reason))
-        return state
+        return None
 
     ok, reason = guard_order(entry, sl_hl, plan.size, cfg)
     if not ok:
+        _clear_pending(cfg)
         log(f"  ENTRY REFUSED by guard: {reason}")
         notify.send_telegram(notify.fmt_blocked("ENTRY REFUSED", reason))
-        return state
+        return None
 
     if plan.resized:
         note = (f"account can't carry full risk with a liq-safe stop; sized down to "
@@ -303,40 +404,36 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         f"notional={plan.notional:.2f} lev={plan.leverage}x resized={plan.resized}")
 
     if cfg.dry_run:
+        _clear_pending(cfg)
         log("  DRY_RUN: would update_leverage + market_entry + place_stop")
         notify.send_telegram("🟡 DRY_RUN entry signal\n"
                              + notify.fmt_entry(t, entry, sl_hl, plan.size, cfg.risk_usd, plan.leverage))
-        return state
+        return None
 
     # --- LIVE ---
     try:
         broker.update_leverage(plan.leverage)
     except Exception as e:
-        log(f"  ENTRY ABORTED — leverage set failed: {e!r}")
-        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"leverage set failed: {e!r}"))
-        return state
+        return _defer_or_abort(cfg, e, "leverage set", anchor_time, crossover_time, sl_binance, t, log)
 
     try:
         fill = broker.market_entry(plan.size)
     except Exception as e:
-        log(f"  ENTRY ABORTED — market_entry failed: {e!r}")
-        notify.send_telegram(notify.fmt_blocked("ENTRY ABORTED", f"market_entry failed: {e!r}"))
-        return state
+        return _defer_or_abort(cfg, e, "market_entry", anchor_time, crossover_time, sl_binance, t, log)
+
+    _clear_pending(cfg)   # committed — a position is opening; never retry this signal
     actual_entry = fill["avg_px"]
-    actual_size = fill["filled"]        # canonical: use FILLED size everywhere below
+    actual_size = fill["filled"]
     log(f"  FILLED entry @ {actual_entry:.2f} sz={actual_size}")
 
-    # Persist the OPEN position IMMEDIATELY (before the stop) so a later failure can
-    # never leave an untracked live long. stop_oid filled in once the stop rests.
     new = PositionState(
         status=IN_POSITION,
         entry_time=str(t), entry_price=actual_entry, sl_price=sl_hl, size=actual_size,
-        anchor_time=str(sig.anchor_time), crossover_time=str(sig.crossover_time),
+        anchor_time=str(anchor_time), crossover_time=str(crossover_time),
         stop_oid=None,
     )
     store.save(new)
 
-    # place the resting stop (retry before giving up on a good fill)
     stop_oid = None
     for attempt in range(3):
         try:
@@ -351,8 +448,6 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
         return store_flat(store)
 
     if stop_oid is None:
-        # couldn't place the stop — try to flatten, but GUARD the close so a failed
-        # flatten never orphans an unprotected position with a stale FLAT store.
         log("  STOP PLACEMENT FAILED after retries — flattening")
         try:
             broker.market_close()
@@ -363,7 +458,7 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
             notify.send_telegram(notify.fmt_blocked(
                 "⛔ UNPROTECTED POSITION",
                 "stop AND flatten both failed — CHECK MANUALLY. Bot keeps managing it."))
-            return new   # keep IN_POSITION so next tick/reconcile manages/closes it
+            return new
 
     new.stop_oid = stop_oid
     store.save(new)
@@ -374,10 +469,34 @@ def tick(cfg: LiveConfig, store: PositionStore, broker, log=print) -> PositionSt
     return new
 
 
-def store_flat(store: PositionStore) -> PositionState:
-    s = PositionState()
-    store.save(s)
-    return s
+def _note_rate_limit(cfg, log):
+    """Throttle 429/5xx tick alerts: send ONE Telegram card per UTC day + keep a running
+    daily count in a sidecar (so a worsening pattern is still visible without per-blip
+    spam). These are harmless and self-healing (retried in-tick; entries catch up)."""
+    p = cfg.state_path + ".429"
+    today = str(pd.Timestamp.utcnow().date())
+    data = {"day": today, "count": 0}
+    try:
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                prev = json.load(f)
+            if prev.get("day") == today:
+                data = prev
+    except Exception:
+        pass
+    data["day"] = today
+    data["count"] = int(data.get("count", 0)) + 1
+    try:
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(p + ".tmp", p)
+    except Exception:
+        pass
+    log(f"  [rate-limit] 429/5xx #{data['count']} today (throttled)")
+    if data["count"] == 1:
+        notify.send_telegram(
+            "⏳ Hyperliquid rate-limit (429) today — harmless. The bot rides it out and "
+            "catches up any missed entry. Further 429 cards suppressed today (count in the log).")
 
 
 # --------------------------------------------------------------------------- #
@@ -635,7 +754,11 @@ def run_forever(cfg: LiveConfig, store: PositionStore, broker, log=print):
             tick(cfg, store, broker, log)
             notify.ping_health()          # liveness: tick completed OK
         except Exception as e:   # never let one bad tick kill the worker
-            # process is still alive (heartbeat continues) — surface the logic
-            # error via Telegram; do NOT mark healthchecks down for a retryable tick.
+            # process is still alive (heartbeat continues). A rate-limit (429/5xx) is
+            # harmless + self-healing (retries in-tick, catches up missed entries), so
+            # it is THROTTLED to one card/day; any OTHER error stays loud (real bug).
             log(f"[ERROR] tick failed: {e!r}")
-            notify.send_telegram(notify.fmt_blocked("TICK ERROR", repr(e)))
+            if is_rate_limit(e):
+                _note_rate_limit(cfg, log)
+            else:
+                notify.send_telegram(notify.fmt_blocked("TICK ERROR", repr(e)))

@@ -12,6 +12,8 @@ from typing import Optional
 import pandas as pd
 import requests
 
+from .nethttp import retry, TRANSIENT_READ
+
 # Binance public market-data mirror — NOT geo-blocked (api.binance.com returns
 # HTTP 451 from US IPs like Render's). Same klines payload, no API key.
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
@@ -49,12 +51,15 @@ def fetch_binance_recent(symbol: str, interval: str, lookback: int) -> pd.DataFr
     Most recent `lookback` CLOSED Binance klines.
     Index: open_time (UTC). Columns: open, high, low, close, volume (float).
     """
-    resp = requests.get(
-        BINANCE_KLINES_URL,
-        params={"symbol": symbol, "interval": interval, "limit": lookback + 1},
-        timeout=30,
-    )
-    resp.raise_for_status()
+    def _get():
+        r = requests.get(
+            BINANCE_KLINES_URL,
+            params={"symbol": symbol, "interval": interval, "limit": lookback + 1},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r
+    resp = retry(_get, TRANSIENT_READ)
     bars = resp.json()
     df = pd.DataFrame(bars, columns=KLINE_COLUMNS)
     df = df[["open_time", "open", "high", "low", "close", "volume"]].copy()
@@ -81,8 +86,11 @@ def fetch_hl_candles(
     body = {"type": "candleSnapshot",
             "req": {"coin": coin, "interval": interval,
                     "startTime": start_ms, "endTime": end_ms}}
-    resp = requests.post(f"{api_url}/info", json=body, timeout=30)
-    resp.raise_for_status()
+    def _post():
+        r = requests.post(f"{api_url}/info", json=body, timeout=30)
+        r.raise_for_status()
+        return r
+    resp = retry(_post, TRANSIENT_READ)
     data = resp.json()
     if not data:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])

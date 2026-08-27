@@ -9,53 +9,16 @@ so the position stays protected even if the bot process dies.
 
 Rounding: BTC perp szDecimals=5 -> size to 5 dp; perp price decimals = 6 - szDecimals.
 
-Resilience: every Hyperliquid API call goes through _retry(), which backs off and
-retries on a transient HTTP status (429 rate-limit, 5xx gateway blip) from HL's edge
-(CloudFront/nginx). A one-off 429 self-heals in-tick instead of aborting the whole bar.
+Resilience: every Hyperliquid API call goes through _retry() (shared with feed.py in
+ems_live/nethttp.py), which backs off + jitters and retries on a transient HTTP status
+(429 rate-limit, 5xx gateway blip) from HL's edge. A rate-limit self-heals in-tick
+instead of aborting the bar — reads retry on 429+5xx, writes on 429 only (no double fill).
 """
-import time
 from typing import Optional
 
 from .config import LiveConfig
-
-
-# Transient HTTP statuses from Hyperliquid's edge (CloudFront/nginx), surfaced by the
-# SDK's ClientError. A 429/5xx is rejected BEFORE the matching engine, so retrying a
-# READ is always safe. For WRITES we retry only on 429 (unambiguously "rate-limited,
-# never processed") — a 5xx could in theory hide a lost success response, so an order
-# is not blindly resent on 5xx (avoids any chance of a double fill).
-_TRANSIENT_READ = frozenset({429, 500, 502, 503, 504})
-_TRANSIENT_WRITE = frozenset({429})
-
-
-def _http_status(exc) -> Optional[int]:
-    """Best-effort HTTP status from a hyperliquid ClientError or a requests error."""
-    for attr in ("status_code", "code"):
-        v = getattr(exc, attr, None)
-        if isinstance(v, int):
-            return v
-    resp = getattr(exc, "response", None)
-    if resp is not None and isinstance(getattr(resp, "status_code", None), int):
-        return resp.status_code
-    return None
-
-
-def _retry(fn, statuses, tries: int = 4, base_delay: float = 0.5):
-    """
-    Call fn(); on a transient HTTP status (in `statuses`) retry with exponential
-    backoff (0.5s, 1s, 2s). Any non-transient error — or the final attempt — raises,
-    so a genuine outage still surfaces to the tick handler (which retries next bar).
-    Turns a one-off 429/gateway blip into a silent self-heal instead of a skipped bar.
-    """
-    delay = base_delay
-    for attempt in range(1, tries + 1):
-        try:
-            return fn()
-        except Exception as e:
-            if attempt == tries or _http_status(e) not in statuses:
-                raise
-            time.sleep(delay)
-            delay *= 2
+from .nethttp import (retry as _retry, TRANSIENT_READ as _TRANSIENT_READ,
+                      TRANSIENT_WRITE as _TRANSIENT_WRITE)
 
 
 class LiveBroker:
