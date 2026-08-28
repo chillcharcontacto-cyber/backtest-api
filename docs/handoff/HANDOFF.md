@@ -1,6 +1,30 @@
 # Handoff
 
-## Last Session Summary — Tier-4 ACTIVATED: brain live + thin-client published + signing key rotated clean
+## Last Session Summary — first real partner ONBOARDED (Tier-4 in production)
+
+**First partner onboarded end-to-end (operator side) — no code changes; pure execution of the
+per-partner recipe, now proven in production.**
+
+- Minted license key **`EMS-903ee91de9bcc2ab3799c4d1`**, bound to the partner's HL main address
+  **`0x6D999974e68B145c61891f9A808287c9aA206097`** (he's funded: ~$332 spot USDC, no position).
+- Added to **`EMS_LICENSE_KEYS`** on the `ems-brain` service (now 2 entries: `EMS-test-01` = the
+  master + the partner); Save-and-deployed.
+- **Verified LIVE:** his key + his address → HTTP 200, signature verifies against the clean signer
+  (`0xd0B6…4513`), decision bound to him; his key from a WRONG account → **403** (binding enforced
+  in production — a leaked key is useless from any other wallet).
+- Drafted + user is sending him: his key + repo link `github.com/chillcharcontacto-cyber/ems-thin-client`
+  + "use THIS wallet as `HL_MASTER_ADDRESS`, paste the key as `EMS_LICENSE_KEY`, follow SETUP.md,
+  dry-run then arm."
+- **PENDING — his side:** he generates his OWN agent key + Telegram + deploys on Render (dry-run →
+  arm) per SETUP.md. Operator can't see his machine; relay issues here (usually the crypto/agent-key
+  step). To check his account read-only: pull HL clearinghouseState for `0x6D99…6097`.
+
+To onboard the NEXT partner, repeat the recipe (Next Steps): address → mint key → add to
+`EMS_LICENSE_KEYS` → verify → send. Claude can hand the exact JSON value + draft the message.
+
+---
+
+## Previous Session Summary — Tier-4 ACTIVATED: brain live + thin-client published + signing key rotated clean
 
 **Tier-4 is now fully live — no repo code changes; all activation (Render + GitHub + verification).**
 
@@ -26,7 +50,7 @@ Tier-4 is ready for real partners; onboarding is now a per-partner operator reci
 
 ---
 
-## Previous Session Summary — 429 rate-limit fix: hardened retry + missed-entry catch-up + throttled alerts
+## Session — 429 rate-limit fix: hardened retry + missed-entry catch-up + throttled alerts
 
 **Shipped (`45e4a1e`, deployed to the worker). The live bot's OPEN trade is untouched — the
 in-position management code didn't change; still riding (+$310 as of 08-27).**
