@@ -4,6 +4,26 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-09-04
+
+**Diagnostic heuristic: "no Telegram cards at all" ≠ "no signal" — it means the bot is down or
+Telegram is misconfigured.** A correctly-running bot always emits a 🚀 start card on boot AND a
+daily heartbeat, independent of whether the strategy fired. So when a partner (Euphrates) reported
+zero cards + zero trades, the correct first move is NOT to wait for a signal — it's to check (a)
+is the Render worker actually live/not-crashed (Logs), and (b) is Telegram wired (token/chat_id
+correct + user pressed Start on their own bot). Recorded so future partner-support starts here
+and asks for the Render Logs first. Also: verify the operator side independently (account funded,
+license returns 200 + bound) before blaming the client — here that ruled the brain/licensing out.
+
+**"To-now" model CSVs are regenerated from the scratchpad, never by editing the tracked script.**
+Regenerating `trades_v3_locked_to_now.csv` through the current date: copied
+`scripts/variation_h1_intrabar.py` to the scratchpad, bumped its END, and ran it there (repo
+working tree untouched — important since this checkout sits on the `multitimeframe` branch). The
+locked V3 model through 2026-09-04 is EV +1.15R / +579R over 504 trades, up from +0.96R / +478R
+(07-21) purely because the 08-19 runner (trade #501, +103.5R) is now included.
+
+---
+
 ## 2026-08-27
 
 **Tier-4 activated end-to-end — brain live, thin-client repo public, verified with the shipped code**

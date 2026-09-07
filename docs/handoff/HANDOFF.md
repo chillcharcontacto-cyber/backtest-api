@@ -1,6 +1,33 @@
 # Handoff
 
-## Last Session Summary — first real partner ONBOARDED (Tier-4 in production)
+## Last Session Summary — winning-model CSV through today + partner #1 (Euphrates) troubleshooting
+
+**No code changes. A backtest export + a live-onboarding debug (in progress).**
+
+**Regenerated the V3-locked (winning model) backtest through 2026-09-04** (reused
+`scripts/variation_h1_intrabar.py` from the scratchpad with END bumped — repo untouched).
+Delivered `trades_v3_locked_to_now.csv` to the user + Desktop. Model now (with the big runner
+included): **504 trades, WR 23%, EV +1.15R, PF 2.86, total +579R, maxDD −31.5R** (was +0.96R /
++478R through 07-21 — the runner lifted it). ⭐ The runner = **trade #501**: 2026-08-19 →
+08-28 (~220h), **+103.5R**, 64,507 → 78,331, exited H1<EMA100. That's the live winner (live was
+$3-risk sizing → the ~$310). This CSV is a fresh **backtest**, not live fills, but the runner +
+recent trades line up with the live account.
+
+**Live bot:** the 08-19 runner **CLOSED ~08-28 for the big win**; bot has since taken a few small
+trades and is **FLAT** as of 09-04. Still running clean (429 fix holding).
+
+**Partner #1 Euphrates — NOT getting any Telegram cards or trades after his setup (OPEN).**
+Verified MY side is fine: his HL account funded (~$332 spot, FLAT), his license active + bound
+on the brain (**200**), but **0 orders ever**. Key insight: "no cards AT ALL" ≠ "no signal" — a
+running bot always sends a 🚀 start card + a daily heartbeat regardless of signals. So it's
+**his deployment**: either his Render worker isn't running/crashed, or Telegram is misconfigured
+(wrong token/chat_id, or he never pressed Start on his own @BotFather bot). Gave him an ordered
+checklist; **fast path = his Render Logs** (shows crash vs running-but-Telegram-silent) + a
+browser Telegram self-test. **Waiting on his logs** to pinpoint.
+
+---
+
+## Previous Session Summary — first real partner ONBOARDED (Tier-4 in production)
 
 **First partner onboarded end-to-end (operator side) — no code changes; pure execution of the
 per-partner recipe, now proven in production.**
@@ -24,7 +51,7 @@ To onboard the NEXT partner, repeat the recipe (Next Steps): address → mint ke
 
 ---
 
-## Previous Session Summary — Tier-4 ACTIVATED: brain live + thin-client published + signing key rotated clean
+## Session — Tier-4 ACTIVATED: brain live + thin-client published + signing key rotated clean
 
 **Tier-4 is now fully live — no repo code changes; all activation (Render + GitHub + verification).**
 
@@ -443,10 +470,9 @@ Verify the 🚀 card reads `risk $6.0` after the redeploy.
   with the open winner). Funded up from ~$325 via Phantom→KuCoin→Arbitrum→HL. Unified Account.
 - Mainnet agent **`ems-bot-main`** `0xc07aA2354249ba34D7a4436fEDEC6864Dd07b8Fd` authorized
   (~180 days from 2026-07-13; re-authorize before it lapses). Key in Render env only, trade-only.
-- **OPEN trade (as of 08-27):** BTC long 0.02151 @ 64,477, resting Stop Market 64,337 (= the
-  old $3 risk), **+~$248 unrealized** at BTC ~76k — a deep runner still riding to the H1<EMA100
-  exit (stop sits ~15% below price). Sized at $3 (opened 08-19, before the change); next entry
-  sizes at $6. Health-checked clean 08-23 (see Last Session Update).
+- **FLAT as of 09-04.** The 08-19 BTC runner (0.02151 @ 64,477, $3-risk) **closed ~08-28 at
+  ~78,331 on the H1<EMA100 exit — a big win** (+103.5R in backtest terms; the live +$~310), then
+  a few small trades since (all in the backtest CSV #502-504). Next entry sizes at $6.
 - Auto-leverage: at $6 risk on ~$1.3k, a ~1% stop → ~1×, tight stops → higher lev, all liq-safe.
 - Testnet still exists (`ems-bot` agent, ~$998 spot) but the worker points at mainnet.
 
@@ -529,6 +555,14 @@ entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer 
 ## Next Steps — bot is LIVE on mainnet and settled; work is now analysis + reporting
 
 Deploy/arm/mainnet steps are all DONE. Nothing is blocking; the bot runs unattended.
+
+🔧 **IMMEDIATE — debug partner #1 Euphrates (no Telegram cards / no trades).** My side is
+verified (his account funded ~$332, license active + bound = 200, 0 orders ever). "No cards at
+all" = his Render worker isn't running/crashed OR Telegram is misconfigured (NOT no-signal — a
+running bot always sends 🚀 + a daily heartbeat). **Get his Render Logs** (fast path: shows crash
+vs running-but-Telegram-silent) + have him run the browser Telegram self-test
+(`api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<ID>&text=test` → `"ok":true`?) and confirm he
+pressed **Start** on his own @BotFather bot. Then pinpoint + fix.
 
 ⭐ **TIER-4 IS LIVE (activation COMPLETE 08-27).** Brain `https://ems-brain.onrender.com` (clean
 signer `0xd0B67b43ce1459381871aF5b64FBB47CC4404513`); public thin-client repo
