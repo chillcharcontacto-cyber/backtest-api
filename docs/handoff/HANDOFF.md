@@ -1,6 +1,39 @@
 # Handoff
 
-## Last Session Summary — winning-model CSV through today + partner #1 (Euphrates) troubleshooting
+## Last Session Summary — EMS V3 backtested on GOLD (edge generalizes) + live drawdown noted
+
+**No repo code changes (a scratchpad backtest + a live read).**
+
+**Backtested the winning model (V3 locked, long-only) on GOLD (XAU/USD)** using the swing project's
+already-cached Dukascopy tick→M5 data (`strategies/swing/data_cache/XAUUSD_*_m5.parquet`, 2016-06 →
+2026-06, ~10y, 711k M5 bars), resampled to M30/H1, **same EMS code as BTC**. Ran from the
+scratchpad (repo untouched). Result:
+**n=379 · WR 26.4% · EV +0.90R (net +0.58R) · PF 2.59 · total +341R (net +220R) · maxDD −21.5R ·
+avg hold 51h · biggest +70R · median stop 0.33%.**
+**The edge GENERALIZES to gold** — positive, PF 2.59, +220R net over 10y. vs BTC (~9y): gold has a
+higher WR (26 vs 23%) and LOWER drawdown (−21.5 vs −31.5R), but lower EV (+0.90 vs +1.15R) and
+longer holds (51 vs 32h). ⚠️ Gold's stops are TIGHTER (median 0.33% vs 0.82%) → bigger fee drag
+(gross +341 → net +220, a larger haircut than BTC — reinforces the parked fee-drag study).
+Delivered `trades_ems_v3_XAUUSD_10y.csv` (Desktop). Caveats: (1) 10y = the cached high-quality
+window; "all data since 2003" needs ~13y more Dukascopy tick fetch (~1-2h background, offered);
+(2) H4 aligned to UTC like BTC — gold's TradingView H4 aligns to the Madrid session (a refinement,
+same model logic). Reusable finding: **swing's Dukascopy cache is a high-quality multi-asset data
+source for EMS backtests** (FX/metals), and XAUUSD is registered in
+`multitimeframe/engine/instruments.py` (scale 1e3).
+
+**Live check (09-26): the mainnet bot is in a DRAWDOWN — model variance, not a bug.** Equity
+**~$872** (down from the ~$1,400 peak after the runner), FLAT, ~23 fills since 09-04 = a string of
+small losses (BTC chopping 78k→84k = EMA whipsaws). The strategy is low-WR/streaky by design, so
+this is expected variance — but the account is meaningfully off its peak. Worth a data reconcile
+(realized R / WR / is it over-trading vs historical ~1 trade/week?) — offered, not yet run.
+
+**Partner #1 Euphrates STILL not trading — 0 fills in 3 weeks.** His deploy issue was never
+resolved (waiting on his Render logs since ~09-04). Account funded ($332) + license active/bound
+(200), so it's purely his deployment (worker down or Telegram misconfig).
+
+---
+
+## Previous Session Summary — winning-model CSV through today + partner #1 (Euphrates) troubleshooting
 
 **No code changes. A backtest export + a live-onboarding debug (in progress).**
 
@@ -27,7 +60,7 @@ browser Telegram self-test. **Waiting on his logs** to pinpoint.
 
 ---
 
-## Previous Session Summary — first real partner ONBOARDED (Tier-4 in production)
+## Session — first real partner ONBOARDED (Tier-4 in production)
 
 **First partner onboarded end-to-end (operator side) — no code changes; pure execution of the
 per-partner recipe, now proven in production.**
@@ -556,13 +589,24 @@ entry-timing fix, Unified-Account spot-as-perp-margin (verified — no transfer 
 
 Deploy/arm/mainnet steps are all DONE. Nothing is blocking; the bot runs unattended.
 
-🔧 **IMMEDIATE — debug partner #1 Euphrates (no Telegram cards / no trades).** My side is
-verified (his account funded ~$332, license active + bound = 200, 0 orders ever). "No cards at
-all" = his Render worker isn't running/crashed OR Telegram is misconfigured (NOT no-signal — a
-running bot always sends 🚀 + a daily heartbeat). **Get his Render Logs** (fast path: shows crash
-vs running-but-Telegram-silent) + have him run the browser Telegram self-test
-(`api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<ID>&text=test` → `"ok":true`?) and confirm he
-pressed **Start** on his own @BotFather bot. Then pinpoint + fix.
+🔧 **STILL OPEN (3 weeks) — debug partner #1 Euphrates (no cards / no trades; 0 fills as of
+09-26).** My side is verified (account funded ~$332, license active + bound = 200, 0 orders ever).
+"No cards at all" = his Render worker isn't running/crashed OR Telegram is misconfigured (NOT
+no-signal — a running bot always sends 🚀 + a daily heartbeat). **Get his Render Logs** (fast path:
+crash vs running-but-Telegram-silent) + browser Telegram self-test
+(`api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<ID>&text=test` → `"ok":true`?) + confirm he
+pressed **Start** on his own @BotFather bot. Blocked on him sending the logs.
+
+📉 **Reconcile the mainnet account drawdown (offered, not run).** Equity ~$872 (from ~$1,400 peak);
+~23 fills since 09-04, small losses in BTC chop. Pull all realized trades since the runner, compute
+R / WR / hold, and check it's normal variance vs over-trading (rate looks ~2-3x historical — likely
+legit chop, verify). It's the user's money → worth confirming health with data.
+
+🥇 **Gold full-history (optional).** V3 works on gold (10y: +220R net, PF 2.59 — see Last Session).
+For the definitive "all data" number, fetch XAUUSD ticks 2003→2016 via the MTF Dukascopy pipeline
+(`multitimeframe/engine/data/`, ThreadPool, ~1-2h background), concat with the cached 2016-2026,
+rerun `scripts/gold_ems_v3.py` (committed this session). Also possible: re-run with H4 aligned to
+Madrid (gold's TV tz).
 
 ⭐ **TIER-4 IS LIVE (activation COMPLETE 08-27).** Brain `https://ems-brain.onrender.com` (clean
 signer `0xd0B67b43ce1459381871aF5b64FBB47CC4404513`); public thin-client repo

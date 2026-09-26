@@ -4,6 +4,34 @@ A running list of architectural and product decisions, newest first.
 
 ---
 
+## 2026-09-26
+
+**The EMS V3 edge generalizes beyond BTC — validated on GOLD (XAU/USD), 10y**
+Ran the winning model (V3 locked, long-only) unchanged on XAU/USD M30 (2016-2026): n=379, PF 2.59,
++341R gross / +220R net, maxDD −21.5R, WR 26.4%. Positive and comparable to BTC (lower EV +0.90 vs
++1.15R, but higher WR and lower drawdown). Conclusion: the trend-following edge is not a BTC
+artifact — it holds on gold's secular uptrend too, so the strategy is a candidate for multi-asset
+deployment. Recorded so future "does it work on X?" questions start from "yes on BTC + gold."
+
+**Reuse the swing project's cached Dukascopy tick→M5 as the high-quality multi-asset data source
+for EMS backtests.** EMS's own `ems/data.py` only fetches crypto (Binance/Bitstamp) and there is no
+`TWELVEDATA_API_KEY`. But `strategies/swing/data_cache/` already holds Dukascopy-tick-derived M5
+parquet (2016-2026) for FX + metals (XAUUSD included), and `multitimeframe/engine/instruments.py`
+registers the instruments/scales. Decision: for any EMS backtest on FX/metals, load that cached M5
+and resample to M30/H1 (via a scratchpad script, repo untouched) rather than adding a new data
+path. To extend history pre-2016, use the MTF Dukascopy fetcher (`multitimeframe/engine/data/`,
+parallel hourly tick pull) — it's a multi-hour job, so do it only when the definitive full-history
+number is actually needed.
+
+**Gold's tighter stops magnify fee drag — reinforces the parked min_risk_pct study.** Gold's median
+structural stop is 0.33% vs BTC's 0.82%; since `notional = risk/stop%`, gold's fee take is larger
+(gross +341R → net +220R, a bigger haircut than BTC). This is the same effect the parked fee-drag
+study targets, now visible across assets: filtering the tightest stops likely helps net EV more on
+gold than on BTC. (Caveat logged: the gold run aligned H4 to UTC like the BTC model; gold's
+TradingView H4 aligns to the Madrid session — a refinement, not a logic change.)
+
+---
+
 ## 2026-09-04
 
 **Diagnostic heuristic: "no Telegram cards at all" ≠ "no signal" — it means the bot is down or
